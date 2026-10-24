@@ -1,0 +1,15 @@
+{
+  "note": "本文件钉的是**决定产物的输入**,不是产物本身；见 tools/30-verify-reproducible.sh 顶部说明。",
+  "chromium_commit": "1d17a2e2ee147bb7d6ae2ab6abdb3a2510c17775",
+  "chromium_ref": "156.0.8078.47",
+  "patch_digest": "186fcc5dfa7f54e370a48ad8cf1e11367527883fc4c5000bf1f645b0aed2de47",
+  "gn_args_digest": "88c2fe502c6aa7e8cbb210af465139c649bd8fb1c61b459411d2ea52d35eea0a",
+  "msvc_version": "14.44.35207",
+  "windows_sdk_version": "10.0.28000.0",
+  "gn_args_note": "构建线程数刻意**不**钉：它不该影响字节。若改了它就复现不出来，那本身就是不可复现的证据。",
+  "artifacts": {
+    "chrome.dll": { "sha256": "958e98fb7b92b8dbf473f87a30c93260cc5b40de5f5c5581bb74bee7c8514d0a", "bytes": 347962368 },
+    "chrome.exe": { "sha256": "a21d0e8ec888b9803629faf87fc7f12308de842962a3f73d598ca5691fc4b555", "bytes": 4023296 },
+    "chrome_elf.dll": { "sha256": "3752362ec2832ed4ac6c9af031839bdb86746a6263e401365cbfc9ac565a15b4", "bytes": 2735616 }
+  }
+}
