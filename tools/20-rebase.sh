@@ -51,9 +51,20 @@ resolve_tool() {
   return 1
 }
 
-# **必需**:告诉 depot_tools 用本机的 Visual Studio,而不要去抓 Google 的
-# hermetic toolchain(那个只对 Googler 可用,抓会失败)。
+# **必需**:这些是本机手工摸索出来的工具链要求,写进脚本才算「一条命令可复现」。
+# 详见 docs/坑与解法.md 坑-21。
+#
+# 1) 用本机 VS,别去抓 Google 的 hermetic toolchain(那个只对 Googler 可用)
 export DEPOT_TOOLS_WIN_TOOLCHAIN=0
+#
+# 2) `build/vs_toolchain.py` 只用 `%ProgramFiles%\...\2022\<版本>` 找 VS,
+#    而本机 BuildTools 在 **Program Files (x86)** 下 —— 它的官方逃生口是这个变量。
+export vs2022_install="C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools"
+#
+# 3) 上游把 Windows SDK 版本**硬钉成 10.0.28000.0**(两处:`build/vs_toolchain.py` 与
+#    `build/toolchain/win/setup_toolchain.py`,都无兜底),而本机只有 10.0.26100.0。
+#    补丁 0003 让这两处优先读本变量。不设它时行为与上游一致。
+export OUUUT_WINDOWS_SDK_VERSION="10.0.26100.0"
 
 DRY_RUN=0
 TARGET=""
@@ -193,24 +204,28 @@ fi
 # ---- 4/7 gn gen ------------------------------------------------------------
 log "4/7 gn gen out/Release"
 mkdir -p "$(dirname "$OUT_DIR")"
-# 说明:这是一份「能编出可跑 chrome.exe」的最小官方配置;
-# 首次实跑时按 chromium/README.md §三 逐项核对。
-GN_ARGS='is_debug=false
-is_official_build=true
-symbol_level=1
-blink_symbol_level=0
-v8_symbol_level=0
-enable_nacl=false
-is_component_build=false
-proprietary_codecs=true
-ffmpeg_branding="Chrome"
-treat_warnings_as_errors=false
-chrome_pgo_phase=0'
+# 写成 args.gn 文件再 `gn gen out/Release`,而不是 `--args="..."` ——
+# 少一层转义、可读、且与 `gn args` 的用法一致。
+# 说明:工具链**不在这里指定** —— 走 Chromium 自己的自动探测,只需上面那两个环境变量。
+# (试过直接写 visual_studio_path:那条分支在上游是坏的,见 chromium/README.md §二·五)
+ARGS_FILE="${OUT_DIR}/args.gn"
 if [ "$DRY_RUN" -eq 1 ]; then
-  printf '  [dry-run] %s gen %s --args="%s"\n' "${GN:-gn}" "$OUT_DIR" "$GN_ARGS"
+  printf '  [dry-run] 会写 %s 并执行 gn gen\n' "$ARGS_FILE"
 else
+  mkdir -p "$OUT_DIR"
+  {
+    echo '# 由 tools/20-rebase.sh 生成 —— 手工改会被覆盖。'
+    echo '# 工具链走自动探测,只需 vs2022_install / OUUUT_WINDOWS_SDK_VERSION 两个环境变量。'
+    echo 'is_debug = false'
+    echo 'is_official_build = true'
+    echo 'symbol_level = 1'
+    echo 'proprietary_codecs = true'
+    echo 'ffmpeg_branding = "Chrome"'
+    echo 'treat_warnings_as_errors = false'
+    echo 'chrome_pgo_phase = 0'
+  } > "$ARGS_FILE"
   [ -n "$GN" ] || die "gn 仍不可用 —— 先手工跑一次 \$DEPOT_TOOLS/gclient.bat 让它 bootstrap"
-  "$GN" gen "$OUT_DIR" --args="$GN_ARGS"
+  "$GN" gen "$OUT_DIR"
 fi
 
 # ---- 5/7 构建 --------------------------------------------------------------

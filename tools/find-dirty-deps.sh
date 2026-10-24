@@ -45,12 +45,27 @@ done
 cd "$SRC_DIR"
 total=0
 dirty_dirs=()
+empty_dirs=()
 
 # gclient 的依赖 checkout 都在 4 层以内;用 .git 目录识别「一个独立仓库」
 while IFS= read -r g; do
   d="$(dirname "$g")"
   [ "$d" = "." ] && continue      # 跳过 src 自己
   total=$((total + 1))
+
+  # 类 A:**空/残缺** —— 有 .git 但工作区一个文件都没有。
+  # 这是**首次克隆失败**(常见:上游 429)留下的残骸;而 gclient 因为有 .git
+  # 就认为这个依赖「已完成」,后续 sync **永远不会**去补它 ——
+  # 直到构建报某个 .c/.h 「missing and no known rule to make it」。
+  # 实测:135 个子仓库里 1 个这种状态,把构建卡在 9.7 秒处。
+  files="$(git -C "$d" ls-files 2>/dev/null | wc -l)"
+  if [ "$files" -eq 0 ]; then
+    empty_dirs+=("$d")
+    printf 'EMPTY  %-58s (0 tracked files)\n' "$d"
+    continue
+  fi
+
+  # 类 B:**脏** —— 工作区有本地改动(中断留下的残骸)
   st="$(git -C "$d" status --short 2>/dev/null | head -1)"
   if [ -n "$st" ]; then
     dirty_dirs+=("$d")
@@ -58,10 +73,12 @@ while IFS= read -r g; do
   fi
 done < <(find . -maxdepth 4 -name ".git" -not -path "./.git" 2>/dev/null)
 
-printf '\n扫描 %d 个子仓库,脏的 %d 个\n' "$total" "${#dirty_dirs[@]}"
+bad_dirs=("${empty_dirs[@]}" "${dirty_dirs[@]}")
+printf '\n扫描 %d 个子仓库:空/残缺 %d 个,脏 %d 个\n' \
+  "$total" "${#empty_dirs[@]}" "${#dirty_dirs[@]}"
 
-if [ "${#dirty_dirs[@]}" -eq 0 ]; then
-  echo "✅ 没有脏的依赖 checkout"
+if [ "${#bad_dirs[@]}" -eq 0 ]; then
+  echo "✅ 依赖 checkout 全部完整且干净"
   exit 0
 fi
 
@@ -72,7 +89,7 @@ if [ "$CLEAN" -eq 0 ]; then
 fi
 
 echo
-for d in "${dirty_dirs[@]}"; do
+for d in "${bad_dirs[@]}"; do
   # 注意:必须用**绝对 Windows 路径**调 PowerShell/Remove-Item ——
   # 相对 POSIX 路径在这个 shell 里会被解析成别的地方(见 docs/坑与解法.md 坑-17)
   win="${REPO_ROOT}/chromium/src/$(printf '%s' "$d" | sed 's|^\./||' | tr '/' '\\')"

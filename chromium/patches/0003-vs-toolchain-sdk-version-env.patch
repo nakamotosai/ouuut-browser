@@ -1,0 +1,34 @@
+diff --git a/build/toolchain/win/setup_toolchain.py b/build/toolchain/win/setup_toolchain.py
+index e7651ec9f8..8344ccd622 100644
+--- a/build/toolchain/win/setup_toolchain.py
++++ b/build/toolchain/win/setup_toolchain.py
+@@ -22,7 +22,10 @@ import action_helpers
+ import gn_helpers
+ 
+ SCRIPT_DIR = os.path.dirname(__file__)
+-SDK_VERSION = '10.0.28000.0'
++# ouuut: 同 build/vs_toolchain.py —— 允许用环境变量覆盖 SDK 版本。
++# 上游在这两处各硬编码了一份它 CI 上装的 SDK 版本;自建浏览器常装的是另一个。
++# 不覆盖环境变量时行为与上游完全一致。
++SDK_VERSION = os.environ.get('OUUUT_WINDOWS_SDK_VERSION', '10.0.28000.0')
+ MSVC_DIR = re.compile('^.*/VC/Tools/MSVC/[^/]+/include$')
+ WINDOWS_KITS_DIR = re.compile(r'^(.*/Windows Kits/\d+/Include/[^/]+)/.*')
+ 
+diff --git a/build/vs_toolchain.py b/build/vs_toolchain.py
+index 8bcba3e3f8..cc79b47eb1 100755
+--- a/build/vs_toolchain.py
++++ b/build/vs_toolchain.py
+@@ -60,7 +60,12 @@ from gn_helpers import ToGNString
+ #   Make sure any version numbers in the documentation match the code.
+ #
+ TOOLCHAIN_HASH = '3bfcb536c8'
+-SDK_VERSION = '10.0.28000.0'
++# ouuut: 允许用环境变量覆盖 SDK 版本。
++# 上游在这里硬编码一个它 CI 上装的 SDK 版本,而自建浏览器通常装的是另一个
++# (实测:上游钉 10.0.28000.0,本机只有 10.0.26100.0,且 28000 不是 VS 2022 的
++#  可用组件 —— `vs_installer --add ...Windows11SDK.28000` 返回 87 无效参数)。
++# 不覆盖环境变量时行为与上游完全一致。
++SDK_VERSION = os.environ.get('OUUUT_WINDOWS_SDK_VERSION', '10.0.28000.0')
+ 
+ # Visual Studio versions are listed in descending order of priority.
+ # The first version is assumed by this script to be the one that is packaged,

@@ -7,12 +7,18 @@
 |---|---|---|
 | `0001-ua-remove-headless-token.patch` | 去掉 `GetUserAgentInternal()` 里往 UA 插的 `Headless` | `bot-detector` 的 `headless` 项转 🟢;**同时覆盖 Web Worker** |
 | `0002-ua-force-google-chrome-brand.patch` | `navigator.userAgentData.brands` 里强制出现 `Google Chrome` | `bot-detector` 的 `useragent` 项转 🟢 |
+| `0003-vs-toolchain-sdk-version-env.patch` | **构建**补丁:让 `SDK_VERSION` 优先读 `OUUUT_WINDOWS_SDK_VERSION` 环境变量(上游在两处硬钉 `10.0.28000.0`) | `gn gen` 能过;不设该变量时行为与上游一致 |
 
-两个补丁改的是**同一个文件**(`components/embedder_support/user_agent_utils.cc`),
+两个 UA 补丁改的是**同一个文件**(`components/embedder_support/user_agent_utils.cc`),
 但 hunk 分别在 162 行与 215 行,**相隔 53 行、互不干扰** —— 已实测按顺序 `--3way` 应用成功。
 
-**为什么先于首次构建就写出来**:这两个点位是 M0 实测**精确定位**的(不是猜的),
-源码树已在本地,`git apply --check` 能立刻验证。早写早暴露补丁本身的问题。
+**`0003` 是「构建基础设施」补丁,与前两个性质不同**:前两个改**产品行为**,
+它只让**构建在本机工具链上跑得起来**。所以它设计成**环境变量驱动**:
+没有环境变量时逐字节等于上游 —— 这样它在未来 rebase 时最容易重放,
+也不会悄悄改变别人构建出来的产物。
+
+**为什么先于首次构建就写出 UA 补丁**:那两个点位是 M0 实测**精确定位**的(不是猜的),
+源码树在本地,`git apply --check` 能立刻验证。早写早暴露补丁本身的问题。
 
 ---
 
