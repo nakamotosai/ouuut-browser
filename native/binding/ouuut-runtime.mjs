@@ -35,6 +35,13 @@
 //   原样转发出去、原样送回来。绝不能自己重编 id,否则 harness 永远等不到配对的响应。
 
 import { CdpPipeError } from "./cdp-pipe.mjs";
+import {
+  createTaskSpaceRegistry,
+  isCdpBlockedByUserControl,
+  TaskSpaceError,
+  USER_IN_CONTROL,
+} from "./task-spaces.mjs";
+import { buildHeader, buildSnapshot } from "./snapshot.mjs";
 
 /** 与上游一致的默认响应超时(见 browser-runtime.ts 的 RESPONSE_TIMEOUT_MS 量级)。 */
 const VERSION_TIMEOUT_MS = 10_000;
@@ -53,11 +60,18 @@ export class OuUutRuntimeError extends Error {
  * @param {object} o
  * @param {object} o.cdp           `spawnCdpPipe()` 的返回值
  * @param {string} [o.namespace]   仅用于错误信息
+ * @param {object} [o.registry]    任务空间注册表(默认新建一个空表)
+ * @param {Array}  [o.profiles]    `listProfiles()` 的数据源(M3 才做三种 kind)
  */
-export function createOuUutRuntime({ cdp, namespace = "ouuut" }) {
+export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profiles } = {}) {
   if (!cdp || typeof cdp.sendRaw !== "function" || typeof cdp.onRaw !== "function") {
     throw new OuUutRuntimeError("createOuUutRuntime 需要一个 spawnCdpPipe() 的返回值");
   }
+  const spaces = registry ?? createTaskSpaceRegistry();
+  const profileList =
+    Array.isArray(profiles) && profiles.length > 0
+      ? profiles
+      : [{ id: "default", name: "默认档案", isDefault: true }];
 
   /** harness 会**直接给这两个槽赋值**,所以它们必须是可写的普通属性(不是 getter)。 */
   const runtime = {
@@ -89,6 +103,15 @@ export function createOuUutRuntime({ cdp, namespace = "ouuut" }) {
     }
     if (!parsed || typeof parsed !== "object" || typeof parsed.method !== "string") {
       return reportSendError(parsed, "OUUUT_INVALID_ARGUMENT", "sendCDPMessage 的载荷缺少 method");
+    }
+    // **user-control 门**:已交给用户时,会改浏览器的命令一律拒绝。
+    // 只读查询放行 —— 挡了只会让 agent 变瞎,而不会让它更守规矩。
+    if (spaces.isUserInControl && isCdpBlockedByUserControl(parsed.method)) {
+      return reportSendError(
+        parsed,
+        USER_IN_CONTROL,
+        `任务已交给用户,拒绝执行会改变浏览器状态的命令:${parsed.method}`,
+      );
     }
     try {
       cdp.sendRaw(parsed);
@@ -165,6 +188,101 @@ export function createOuUutRuntime({ cdp, namespace = "ouuut" }) {
       throw new OuUutRuntimeError("Target.createTarget 没返回 targetId", "OUUUT_CREATE_TAB_FAILED");
     }
     return { targetId: res.targetId };
+  };
+
+  // ---- 任务空间(契约逐字来自 harness 源码,见 task-spaces.mjs 顶部)----
+  // `spaces` 在本函数顶部已绑定(可注入,便于测试)
+
+  runtime.listTaskSpaces = async function listTaskSpaces() {
+    return spaces.list(); // **必须包成 {taskSpaces}**
+  };
+
+  runtime.createTaskSpace = async function createTaskSpace(name, profileId) {
+    const created = spaces.create(name, profileId);
+    spaces.select(created.id); // harness 期望"创建并选中"
+    return created;
+  };
+
+  runtime.claimTaskSpace = async function claimTaskSpace(id, name) {
+    const claimed = spaces.claim(id, name);
+    spaces.select(claimed.id);
+    return claimed;
+  };
+
+  runtime.useTaskSpace = async function useTaskSpace(id) {
+    spaces.select(id); // 返回值被忽略,但不能抛
+  };
+
+  runtime.closeTaskSpace = async function closeTaskSpace() {
+    return spaces.close();
+  };
+
+  runtime.completeTaskSpace = async function completeTaskSpace(options) {
+    return spaces.complete(options ?? {});
+  };
+
+  runtime.handOffTaskSpace = async function handOffTaskSpace() {
+    return spaces.handOff();
+  };
+
+  runtime.takeOverTaskSpace = async function takeOverTaskSpace() {
+    return spaces.takeOver();
+  };
+
+  /** `helpers.ts:105-121` 逐字段校验:`id`/`name` 非空 string、`isDefault` boolean。 */
+  runtime.listProfiles = async function listProfiles() {
+    return { profiles: profileList.map((p) => ({ id: p.id, name: p.name, isDefault: Boolean(p.isDefault) })) };
+  };
+
+  // ---- user-control 门(**发送侧**强制)-------------------------------------
+  // 交给用户之后,agent 不得再改浏览器。这一步必须在**我们这层**做:
+  // 浏览器那边不知道"现在轮到用户了",只有我们知道当前空间的所有权。
+  //
+  // 无关的可选项:上游在 `page-model.ts:740` 用 `typeof ego.setAgentTaskState !== "function"`
+  // 判断"这个原生层支不支持",所以这两个**可以缺席**,不算违约。
+  runtime.setAgentTaskState = async function setAgentTaskState(state) {
+    runtime._agentTaskState = state;
+  };
+  runtime.animationHighlightMouseToPosition = async function animationHighlightMouseToPosition(x, y) {
+    runtime._highlight = { x, y };
+  };
+
+  // ---- 快照(§四)。**必须**在交给用户时 reject,且代号精确 ------------------
+  //
+  // `helpers.test.mjs:1334` 明写:探针 key 的是 `snapshot()` 的 **reject** 上带的
+  // `error_code === EGO_TASK_SPACE_USER_IN_CONTROL`(文档化契约),**不看文案**。
+  // 所以这里抛的必须是 TaskSpaceError 且 error_code 精确匹配 —— 文案随便写。
+  runtime.snapshot = async function snapshot(options = {}) {
+    if (spaces.isUserInControl) {
+      throw new TaskSpaceError(
+        "任务已交给用户,暂时不能拍快照",
+        USER_IN_CONTROL,
+      );
+    }
+    let header;
+    if (Number.isFinite(options?.maxResultLength) ? options.maxResultLength > 8 : true) {
+      try {
+        const tabsRes = await runtime.listTabs();
+        const tabs = (tabsRes?.tabs ?? []).map((t, i) => ({
+          label: `p${i + 1}`,
+          title: t.title ?? "",
+          active: Boolean(t.active),
+          targetId: t.targetId,
+        }));
+        const activeIdx = tabs.findIndex((t) => t.active);
+        const active = tabs[activeIdx] ?? tabs[tabs.length - 1];
+        header = buildHeader({
+          label: active?.label,
+          title: active?.title,
+          space: spaces.selected,
+          tabs,
+        });
+      } catch {
+        // 拿不到标签页时也别把快照整个搞失败 —— 头可以退化
+        header = buildHeader({ label: "p?", title: "", space: spaces.selected, tabs: [] });
+      }
+    }
+    return buildSnapshot({ cdp, header, options });
   };
 
   return {

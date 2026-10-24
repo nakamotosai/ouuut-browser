@@ -127,11 +127,34 @@ Page.enable            Network.enable      Browser.getVersion
 「`chrome.dll` 6 处 `Runtime.enable`,其中 5 处在 DevTools frontend/Node inspector 内部,
 1 处是错误示例字符串」。两者互相印证。)
 
-### 6.4 还没接上的
+### 6.4 还差什么
 
-- **任务空间 / 快照 / 交接**的语义(所有权、`EGO_TASK_SPACE_USER_IN_CONTROL` 门、
-  快照化简规则)是**产品行为**,要按 `docs/原生层接口.md` §三～§五 逐条定 —— 下一片
-- **CLI 入口**(对应上游 `ego-browser nodejs <script>`)还没写
-- **真浏览器**那一步没跑:项目策略禁止在命令行裸起浏览器做自动化
-  (见 `docs/坑与解法.md` 与本仓 AGENTS.md),所以「同一段 heredoc 脚本在两个浏览器上跑通」
-  的 ouuut 半边,需要由使用者显式运行本产品的 CLI,或明确的许可
+| 项 | 状态 |
+|---|---|
+| 通道(透传 + CDP 直通原语) | ✅ 11 用例 |
+| 运行时接线(harness 真实产物跑在我们的实现上) | ✅ 7 用例 |
+| **任务空间状态机 + user-control 门 + 快照** | ✅ **15 用例** |
+| CLI 入口(对应上游 `ego-browser nodejs <script>`) | ❌ 未写 |
+| **真浏览器端到端** | ❌ 未跑 —— 项目策略禁止命令行起浏览器做自动化,需使用者显式运行本产品 CLI 或明确许可 |
+| 快照的 `ref` / `loc=` 选择器编号 | ❌ 见 §6.5 |
+
+### 6.5 快照:角色词汇表是**采出来的**
+
+`docs/原生层接口.md` §4.3 只有 example.com 一个样本。为了不猜,写了
+`native/smoke/harvest-roles.mjs`,在 **ego 上采了 3 个页面**(example.com / iana.org /
+MDN button),得到 **16 个实际出现过的 token**:
+
+```
+root  svg_root  paragraph  text  anchor  container  image  unordered_list
+list_item  ordered_list  heading  table  table_row  table_cell  button  textbox
+```
+
+由此确定:**这不是驼峰转换,是词汇映射** —— CDP 说 `RootWebArea`/`StaticText`/`link`/`generic`,
+ego 说 `root`/`text`/`anchor`/`container`。映射表落在 `snapshot.mjs`,不在表里的走驼峰兜底。
+
+**仍未做**(不掩饰):
+- `ref` / `loc=` 选择器编号(§4.5 的跨 frame 唯一性与同一性校验)
+- 文本化简的完整规则(§4.1)
+- `maxResultLength` 目前是**截断**而不是"按重要性选择保留哪些节点"
+- `ordered_list` / `unordered_list` 的区分:CDP 的 `list` 角色不直接告诉有序无序,
+  目前按 `unordered_list` 兜底 —— **这条是已知的粗糙处**

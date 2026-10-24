@@ -58,6 +58,17 @@ const handlers = {
   "Target.createTarget": (id, params) => reply(id, { targetId: "T-new-" + (params?.url ? "with-url" : "blank") }),
   // harness 靠这个拿到 sessionId,拿不到就抛「Target.attachToTarget returned no sessionId」
   "Target.attachToTarget": (id, params) => reply(id, { sessionId: "S-fake-" + (params?.targetId ?? "?") }),
+  // 供 snapshot 走通的最小 AX 树(角色名与结构对齐 example.com 的实测输出)
+  "Accessibility.getFullAXTree": (id) =>
+    reply(id, {
+      nodes: [
+        { nodeId: "1", role: { value: "RootWebArea" }, name: { value: "Example Domain" }, childIds: ["2", "3"] },
+        { nodeId: "2", role: { value: "paragraph" }, childIds: ["4"] },
+        { nodeId: "4", role: { value: "StaticText" }, name: { value: "该域名仅用于文档示例。" } },
+        { nodeId: "3", role: { value: "paragraph" }, childIds: ["5"] },
+        { nodeId: "5", role: { value: "StaticText" }, name: { value: "This domain is for use in documentation examples." } },
+      ],
+    }),
   "Browser.getVersion": (id) =>
     reply(id, {
       protocolVersion: "1.3",
