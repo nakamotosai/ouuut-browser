@@ -15,16 +15,45 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CHROMIUM_DIR="${REPO_ROOT}/chromium"
-SRC_DIR="${CHROMIUM_DIR}/src"
-PATCH_DIR="${CHROMIUM_DIR}/patches"
-OUT_DIR="${SRC_DIR}/out/Release"
-UPSTREAM_FILE="${CHROMIUM_DIR}/UPSTREAM"
+# 路径归一化:**必须**用它来把路径交给原生 Windows 程序(git / gn / autoninja / gclient)。
+#
+# 本机实测的坑:不同 shell 的路径写法不一致 ——
+#   * 隐式 shell:`pwd` 给 `F:\projects\x`,而 `/f/projects/x` 只被 bash 内建(`[ -d ]`/`ls`)认;
+#   * 显式 Git Bash:`pwd` 给 `/f/projects/x`。
+# 而 **原生程序会把 `/f/x` 当成「当前盘根下的 f\x`」** —— 实测 `git clone /f/depot_tools`
+# 落到了 `C:\f\depot_tools`。所以交给原生工具前一律转成 Windows 形。
+winpath() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+}
 
-for d in "F:/depot_tools" "/f/depot_tools" "$HOME/depot_tools" "/c/depot_tools"; do
+REPO_ROOT="$(winpath "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")"
+CHROMIUM_DIR="${REPO_ROOT}\\chromium"
+SRC_DIR="${CHROMIUM_DIR}\\src"
+PATCH_DIR="${CHROMIUM_DIR}\\patches"
+OUT_DIR="${SRC_DIR}\\out\\Release"
+UPSTREAM_FILE="${CHROMIUM_DIR}\\UPSTREAM"
+
+for d in "/f/depot_tools" "F:/depot_tools" "/c/depot_tools" "C:/depot_tools" "$HOME/depot_tools"; do
   if [ -d "$d" ]; then export PATH="${d}:${PATH}"; DEPOT_TOOLS="$d"; break; fi
 done
+
+# 工具解析:Windows 上 depot_tools 同时提供 `gclient`(无扩展名脚本)与 `gclient.bat`。
+# 在 Git Bash 下优先用 `.bat`(它自己会摆好 python 环境),否则回退到无扩展名形式。
+IS_WINDOWS=0
+case "$(uname -s)" in *MINGW*|*MSYS*|*CYGWIN*|Windows_NT) IS_WINDOWS=1 ;; esac
+resolve_tool() {
+  local cands
+  if [ "$IS_WINDOWS" -eq 1 ]; then cands="$1.bat $1"; else cands="$1 $1.bat"; fi
+  local c
+  for c in $cands; do
+    if command -v "$c" >/dev/null 2>&1; then printf '%s' "$c"; return 0; fi
+  done
+  return 1
+}
+
+# **必需**:告诉 depot_tools 用本机的 Visual Studio,而不要去抓 Google 的
+# hermetic toolchain(那个只对 Googler 可用,抓会失败)。
+export DEPOT_TOOLS_WIN_TOOLCHAIN=0
 
 DRY_RUN=0
 TARGET=""
@@ -62,8 +91,11 @@ trap cleanup_tmp EXIT
 # ---- 1/7 前置检查 -----------------------------------------------------------
 log "1/7 前置检查"
 [ -n "${DEPOT_TOOLS:-}" ] || die "找不到 depot_tools。先跑 chromium/README.md §二 第 0 步。"
-command -v gclient >/dev/null || die "gclient 不在 PATH(depot_tools=${DEPOT_TOOLS})"
-command -v gn      >/dev/null || warn "gn 不在 PATH,稍后 gclient sync 会把它带进来"
+
+GCLIENT="$(resolve_tool gclient)" || die "gclient 不在 PATH(depot_tools=${DEPOT_TOOLS};里面应有 gclient.bat 或无扩展名 gclient)"
+GN="$(resolve_tool gn)" || warn "gn 暂不可用 —— gclient sync 之后它才会出现(depot_tools 自己会 bootstrap)"
+AUTONINJA="$(resolve_tool autoninja)" || warn "autoninja 暂不可用 —— 同上,先让 gclient 跑一次 bootstrap"
+printf '  工具:gclient=%s gn=%s autoninja=%s\n' "$GCLIENT" "${GN:-<未就绪>}" "${AUTONINJA:-<未就绪>}"
 [ -d "$SRC_DIR" ]  || die "找不到 ${SRC_DIR}。先跑 tools/10-fetch-chromium.sh。"
 
 # **关键守卫**:必须确认 SRC_DIR 自己就是一个 git 工作树。
@@ -129,7 +161,12 @@ else
     printf '  [dry-run] git fetch origin %s && git checkout -f FETCH_HEAD\n' "$CHROMIUM_REF"
   fi
 fi
-run gclient sync --with_branch_heads --with_tags
+run "$GCLIENT" sync --with_branch_heads --with_tags
+
+# gclient 的第一次运行会把 gn / ninja / autoninja 装进 depot_tools(bootstrap),
+# 所以这里再解析一次 —— 上一轮它们可能还不存在。
+GN="$(resolve_tool gn 2>/dev/null || true)"
+AUTONINJA="$(resolve_tool autoninja 2>/dev/null || true)"
 
 # ---- 3/7 应用补丁 ----------------------------------------------------------
 log "3/7 应用补丁(${PATCH_DIR})"
@@ -170,14 +207,20 @@ ffmpeg_branding="Chrome"
 treat_warnings_as_errors=false
 chrome_pgo_phase=0'
 if [ "$DRY_RUN" -eq 1 ]; then
-  printf '  [dry-run] gn gen %s --args="%s"\n' "$OUT_DIR" "$GN_ARGS"
+  printf '  [dry-run] %s gen %s --args="%s"\n' "${GN:-gn}" "$OUT_DIR" "$GN_ARGS"
 else
-  gn gen "$OUT_DIR" --args="$GN_ARGS"
+  [ -n "$GN" ] || die "gn 仍不可用 —— 先手工跑一次 \$DEPOT_TOOLS/gclient.bat 让它 bootstrap"
+  "$GN" gen "$OUT_DIR" --args="$GN_ARGS"
 fi
 
 # ---- 5/7 构建 --------------------------------------------------------------
 log "5/7 autoninja(预计数小时)"
-run autoninja -C "$OUT_DIR" chrome
+if [ "$DRY_RUN" -eq 1 ]; then
+  printf '  [dry-run] %s -C %s chrome\n' "${AUTONINJA:-autoninja}" "$OUT_DIR"
+else
+  [ -n "$AUTONINJA" ] || die "autoninja 不可用"
+  "$AUTONINJA" -C "$OUT_DIR" chrome
+fi
 
 # ---- 6/7 冒烟(**必须在写 UPSTREAM 之前**)---------------------------------
 log "6/7 冒烟:启动一次产物"

@@ -1,0 +1,24 @@
+=== 1/3 Visual Studio 2022 Build Tools ===
+Found Visual Studio BuildTools 2022 [Microsoft.VisualStudio.2022.BuildTools] Version 17.14.42
+This application is licensed to you by its owner.
+Microsoft is not responsible for, nor does it grant any licenses to, third-party packages.
+Downloading https://download.visualstudio.microsoft.com/download/pr/c95450be-0a45-4779-b142-33f567ccfd6e/68978bb28916156802e60e04c5ee50b94348d802fe151a3ca24433f27984187b/vs_BuildTools.exe
+Successfully verified installer hash
+Starting package install...
+Successfully installed
+  -> trying with pinned Windows 11 SDK component id
+Found an existing package already installed. Trying to upgrade the installed package...
+No available upgrade found.
+No newer package versions are available from the configured sources.
+  -> pinned SDK id rejected (exit -1978335189); retrying with --includeRecommended only
+Found an existing package already installed. Trying to upgrade the installed package...
+No available upgrade found.
+No newer package versions are available from the configured sources.
+winget install BuildTools (workload + recommended) FAILED (exit -1978335189). See the raw output above.
+ËùÔÚÎ»ÖÃ F:\projects\ouuut-browser\tools\00-bootstrap-toolchain.ps1:41 ×Ö·û: 9
++         throw "$What FAILED (exit $LASTEXITCODE). See the raw output  ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (winget install ...w output above.:String) [], RuntimeException
+    + FullyQualifiedErrorId : winget install BuildTools (workload + recommended) FAILED (exit -1978335189). See the ra 
+   w output above.
+ 

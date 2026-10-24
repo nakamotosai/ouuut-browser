@@ -1,16 +1,28 @@
-# 需要**以管理员身份**运行的 PowerShell
+# tools/00-bootstrap-toolchain.ps1  --  RUN AS ADMINISTRATOR
 #
-#   tools\00-bootstrap-toolchain.ps1
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\00-bootstrap-toolchain.ps1
 #
-# 装两样东西:
-#   1. Visual Studio 2022 Build Tools + "使用 C++ 的桌面开发" 工作负载 + Windows 11 SDK
-#   2. depot_tools(拉到 F:\depot_tools 并加进用户 PATH)
+# Installs:
+#   1. Visual Studio 2022 Build Tools + "Desktop development with C++" + Windows 11 SDK
+#   2. depot_tools into F:\depot_tools, added to the user PATH
 #
-# 规模:约 7–10 GB 下载,30–60 分钟,可能需要重启。
-# 依据:chromium/README.md §二 第 0 步。
+# Size: ~7-10 GB download, 30-60 minutes, may require a reboot.
+# Chinese runbook: chromium/README.md  (section 2, step 0)
 #
-# 注意:`$ErrorActionPreference = 'Stop'` **管不住原生命令**(winget/git 返回非 0 不会抛异常),
-# 所以每一处原生命令后面都显式检查 `$LASTEXITCODE`。这是本脚本最容易出的静默失败。
+# ---------------------------------------------------------------------------
+# WHY THIS FILE IS PURE ASCII
+# ---------------------------------------------------------------------------
+# Windows PowerShell 5.1 reads a .ps1 with no BOM as ANSI, NOT UTF-8.
+# A previous version of this file had Chinese string literals; PowerShell
+# mangled the bytes, terminated string literals early, and the whole script
+# failed to parse with "Unexpected token" errors -- the install never ran.
+# Keeping this file ASCII-only removes the entire failure class.
+# Chinese documentation lives in chromium/README.md instead.
+# ---------------------------------------------------------------------------
+#
+# NOTE: $ErrorActionPreference = 'Stop' does NOT catch native command failures
+# (winget / git returning non-zero do not throw). Every native call below is
+# wrapped in Invoke-Native, which checks $LASTEXITCODE explicitly.
 
 $ErrorActionPreference = 'Stop'
 
@@ -18,7 +30,7 @@ function Assert-Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
     $p = New-Object Security.Principal.WindowsPrincipal($id)
     if (-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw "需要管理员权限。请以管理员身份重开 PowerShell 后重跑本脚本。"
+        throw "Administrator privileges required. Re-open PowerShell as Administrator."
     }
 }
 
@@ -26,27 +38,48 @@ function Invoke-Native {
     param([string]$What, [scriptblock]$Cmd)
     & $Cmd
     if ($LASTEXITCODE -ne 0) {
-        throw "$What 失败(exit $LASTEXITCODE)。上面的输出里有 winget/安装器的原始报错。"
+        throw "$What FAILED (exit $LASTEXITCODE). See the raw output above."
     }
 }
 
 Assert-Admin
 
+$wingetId = 'Microsoft.VisualStudio.2022.BuildTools'
+
 Write-Host "=== 1/3 Visual Studio 2022 Build Tools ===" -ForegroundColor Cyan
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    throw "找不到 winget。请从 Microsoft Store 安装「应用安装程序」(App Installer)后重试。"
+    throw "winget not found. Install 'App Installer' from the Microsoft Store and retry."
 }
 
-# 注意:包 ID 与工作负载/SDK 组件 ID 需在首次实跑时核对(chromium/README.md §三)
-Invoke-Native "winget 安装 BuildTools 基础包" {
-    winget install --id Microsoft.VisualStudio.2022.BuildTools `
-        --accept-package-agreements --accept-source-agreements
+# Base package first (idempotent).
+Invoke-Native "winget install BuildTools (base)" {
+    winget install --id $wingetId --accept-package-agreements --accept-source-agreements --disable-interactivity
 }
 
-Invoke-Native "winget 追加 C++ 工作负载与 Windows SDK" {
-    winget install --id Microsoft.VisualStudio.2022.BuildTools `
-        --accept-package-agreements --accept-source-agreements `
-        --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows11SDK.26100 --includeRecommended"
+# Then the C++ workload + Windows SDK via --override.
+# The SDK component id is version-specific; if it is rejected we retry with only
+# the recommended set so the install still completes. Unverified until first
+# real run -- see chromium/README.md section 3.
+$overrideFull = "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows11SDK.26100 --includeRecommended"
+$overrideLite = "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+
+Write-Host "  -> trying with pinned Windows 11 SDK component id"
+$fullOk = $true
+try {
+    & winget install --id $wingetId --accept-package-agreements --accept-source-agreements `
+        --disable-interactivity --override $overrideFull
+    if ($LASTEXITCODE -ne 0) { $fullOk = $false }
+} catch {
+    $fullOk = $false
+}
+if (-not $fullOk) {
+    Write-Host "  -> pinned SDK id rejected (exit $LASTEXITCODE); retrying with --includeRecommended only" -ForegroundColor Yellow
+    Invoke-Native "winget install BuildTools (workload + recommended)" {
+        winget install --id $wingetId --accept-package-agreements --accept-source-agreements `
+            --disable-interactivity --override $overrideLite
+    }
+} else {
+    Write-Host "  -> OK"
 }
 
 Write-Host "=== 2/3 depot_tools ===" -ForegroundColor Cyan
@@ -56,60 +89,62 @@ if (-not (Test-Path $depot)) {
         git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git $depot
     }
 } else {
-    Write-Host "已存在,跳过 clone:$depot"
+    Write-Host "  already present, skipping clone: $depot"
 }
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($userPath -notlike "*$depot*") {
     [Environment]::SetEnvironmentVariable('Path', "$userPath;$depot", 'User')
-    Write-Host "已把 $depot 加进用户 PATH(**需要重开终端**)"
+    Write-Host "  added $depot to the user PATH (REOPEN your terminal)"
 } else {
-    Write-Host "PATH 里已有 $depot"
+    Write-Host "  PATH already contains $depot"
 }
 
-Write-Host "=== 3/3 校验 ===" -ForegroundColor Cyan
+Write-Host "=== 3/3 Verify ===" -ForegroundColor Cyan
 $failures = @()
 
-# cl.exe 由 VS Build Tools 提供;找得到才算装成
 $cl = & where.exe cl.exe 2>$null
 if (-not $cl) {
-    # 退一步:用 vswhere 问 VS 安装器
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path $vswhere) {
         $vcTools = & $vswhere -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-        if ($vcTools) { Write-Host "vswhere 报 VC 工具链在:$vcTools" } else { $failures += "VC 工具链(工作负载 VCTools)未装成" }
+        if ($vcTools) {
+            Write-Host "  vswhere reports VC tools at: $vcTools"
+        } else {
+            $failures += "VC toolchain (workload VCTools) was NOT installed"
+        }
     } else {
-        $failures += "找不到 cl.exe,也找不到 vswhere.exe"
+        $failures += "cl.exe not found, and vswhere.exe is missing too"
     }
 } else {
-    Write-Host "cl.exe: $($cl[0])"
+    Write-Host "  cl.exe: $($cl[0])"
 }
 
 $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include'
-if (-not (Test-Path $sdkRoot)) { $failures += "Windows SDK 未装成(缺 $sdkRoot)" } else {
-    Write-Host "Windows SDK Include 目录:"
-    Get-ChildItem $sdkRoot | ForEach-Object { Write-Host "  $($_.Name)" }
+if (-not (Test-Path $sdkRoot)) {
+    $failures += "Windows SDK not installed (missing $sdkRoot)"
+} else {
+    Write-Host "  Windows SDK Include:"
+    Get-ChildItem $sdkRoot | ForEach-Object { Write-Host "    $($_.Name)" }
 }
 
 if ($failures.Count -gt 0) {
     Write-Host ""
-    Write-Host "=== 校验未通过 ===" -ForegroundColor Red
+    Write-Host "=== VERIFY FAILED ===" -ForegroundColor Red
     $failures | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
     Write-Host ""
-    Write-Host "别急着往下走 —— 请把上面的原始报错贴出来。常见原因:" -ForegroundColor Yellow
-    Write-Host "  * 组件 ID 与当前 VS 版本不匹配(见 chromium/README.md §三 第 1 条)"
-    Write-Host "  * 安装器还在后台跑(打开「Visual Studio Installer」看进度)"
+    Write-Host "Do NOT continue. Common causes:" -ForegroundColor Yellow
+    Write-Host "  * component id does not match your VS version (chromium/README.md section 3)"
+    Write-Host "  * the installer is still running in the background -- open 'Visual Studio Installer'"
     exit 1
 }
 
-Write-Host @"
-
-=== 完成 ===
-重开一个终端,确认:
-  gclient --version
-  where.exe cl.exe
-
-然后跑:
-  tools\10-fetch-chromium.sh
-  tools\20-rebase.sh --dry-run
-"@ -ForegroundColor Green
+Write-Host ""
+Write-Host "=== DONE ===" -ForegroundColor Green
+Write-Host "Reopen a terminal, then confirm:"
+Write-Host "  gclient --version"
+Write-Host "  where.exe cl.exe"
+Write-Host ""
+Write-Host "Then run:"
+Write-Host "  tools\10-fetch-chromium.sh"
+Write-Host "  tools\20-rebase.sh --dry-run"

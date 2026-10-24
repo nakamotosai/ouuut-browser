@@ -12,11 +12,16 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CHROMIUM_DIR="${REPO_ROOT}/chromium"
-SRC_DIR="${CHROMIUM_DIR}/src"
-UPSTREAM_FILE="${CHROMIUM_DIR}/UPSTREAM"
-GCLIENT_FILE="${CHROMIUM_DIR}/.gclient"
+# 交给原生 Windows 程序的路径必须先归一化 —— 见 20-rebase.sh 里 winpath() 的说明。
+winpath() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+}
+
+REPO_ROOT="$(winpath "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")"
+CHROMIUM_DIR="${REPO_ROOT}\\chromium"
+SRC_DIR="${CHROMIUM_DIR}\\src"
+UPSTREAM_FILE="${CHROMIUM_DIR}\\UPSTREAM"
+GCLIENT_FILE="${CHROMIUM_DIR}\\.gclient"
 
 log() { printf '\n\033[1;36m=== %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31m[fatal] %s\033[0m\n' "$*" >&2; exit 1; }
@@ -25,10 +30,33 @@ die() { printf '\033[1;31m[fatal] %s\033[0m\n' "$*" >&2; exit 1; }
 # 同一个目录字符串永不相等 —— 任何路径比较前都要过这里。
 norm() { ( cd "$1" 2>/dev/null && pwd -P ); }
 
-for d in "F:/depot_tools" "/f/depot_tools" "$HOME/depot_tools" "/c/depot_tools"; do
-  if [ -d "$d" ]; then export PATH="${d}:${PATH}"; break; fi
+for d in "/f/depot_tools" "F:/depot_tools" "/c/depot_tools" "C:/depot_tools" "$HOME/depot_tools"; do
+  if [ -d "$d" ]; then export PATH="${d}:${PATH}"; DEPOT_TOOLS="$d"; break; fi
 done
-command -v gclient >/dev/null || die "找不到 gclient —— 先跑 chromium/README.md §二 第 0 步"
+
+IS_WINDOWS=0
+case "$(uname -s)" in *MINGW*|*MSYS*|*CYGWIN*|Windows_NT) IS_WINDOWS=1 ;; esac
+resolve_tool() {
+  local cands
+  if [ "$IS_WINDOWS" -eq 1 ]; then cands="$1.bat $1"; else cands="$1 $1.bat"; fi
+  local c
+  for c in $cands; do
+    if command -v "$c" >/dev/null 2>&1; then printf '%s' "$c"; return 0; fi
+  done
+  return 1
+}
+
+GCLIENT="$(resolve_tool gclient)" || die "找不到 gclient —— 先跑 chromium/README.md §二 第 0 步"
+
+# **必需**:告诉 depot_tools 用本机的 Visual Studio,而不要去抓 Google 的
+# hermetic toolchain(那个只对 Googler 可用,抓会失败)。
+export DEPOT_TOOLS_WIN_TOOLCHAIN=0
+
+for a in "$@"; do
+  case "$a" in
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+  esac
+done
 
 TARGET="${1:-}"
 if [ -z "$TARGET" ] && [ -f "$UPSTREAM_FILE" ]; then
@@ -96,7 +124,7 @@ git checkout -f "refs/tags/${CHROMIUM_TAG}"
 
 log "3/3 gclient sync(拉依赖,约 50 GB)"
 cd "$CHROMIUM_DIR"
-gclient sync --with_branch_heads --with_tags
+"$GCLIENT" sync --with_branch_heads --with_tags
 
 log "完成"
 echo "源码:${SRC_DIR}"

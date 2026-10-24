@@ -35,20 +35,31 @@ Chromium 内含的其他第三方组件(约 2000 个,含 Skia/ANGLE/V8/ffmpeg/pd
 
 
 ================================================================================
-3. ego lite harness(待 fork,见 M2)
+3. ego lite harness(已 vendored,见 M2)
 ================================================================================
 许可:MIT
+版权:Copyright (c) 2026 CitroLabs
 上游:https://github.com/citrolabs/ego-lite
-用途:**计划中** —— 复用其 agent 界面层(JS 批处理、`@ref`/`loc=` 选择器、
-TaskSpace 生命周期、site-learnings)。
+引入 commit:**d392204d1ea1a8027a591ab2b0129c2e11d85f26**
+位置:`harness/`(**197 个文件 / 4.83 MB**)
+用途:复用其 agent 界面层(TaskSpace 模型、`@ref`/`loc=` 选择器与语义快照、
+site-learnings、CDP 逃生口、多宿主插件打包),以及**其原生层接口文档**
+(`harness/docs/native-bindings-api.md` 等)—— 那是我们自写原生层的契约形状。
 
-状态:**尚未 fork、尚未包含任何代码**。M2 落地时必须:
-  (a) 记录 fork 时的上游 commit SHA 于 `docs/决策记录.md`;
-  (b) 在本文件附上完整 MIT 许可文本与版权行;
-  (c) 保留 `LICENSES/ego-lite-MIT.txt`。
+完整 MIT 许可文本与版权行随源码保留:
+- `harness/LICENSE`(上游原件)
+- `LICENSES/ego-lite-MIT.txt`(同一文本的副本,便于集中查看)
 
-注意:ego lite 的**二进制本体**是闭源且禁止派生的,ouuut **不包含**其二进制、
-不派生其二进制、不复制其代码(法律红线 L1)。仅复用其**独立仓库中 MIT 许可的 harness**。
+**可复算的引入记录**:`harness/.vendored-manifest.json` 记录了 tarball 的 sha256、
+逐文件 sha256、以及 tree digest。第三方可据此校验这份副本未被改动。
+
+**排除项**:上游自己的 agent 指令面与仓库配置
+(`.agents/ .claude/ .claude-plugin/ .codex/ .github/ AGENTS.md CONTRIBUTING.md
+.gitignore lefthook.yml`,共 12 个文件)—— 理由:放进本项目会形成嵌套的 agent 配置,
+可能被误当作本项目的规则读进去。**功能代码一行未删**,排除清单同样记在 manifest 里。
+
+注意(法律红线 L1):ego lite 的**二进制本体**是闭源且禁止派生的,ouuut **不包含**其二进制、
+不派生其二进制。此处引入的仅是**其独立仓库中 MIT 许可的 harness**。
 
 
 ================================================================================
