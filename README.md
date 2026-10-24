@@ -10,8 +10,34 @@
 
 ## 唯一 next
 
-**跑 M0 检测基准矩阵** → 回答「**不发 `Runtime.enable` 是否已足够过检测**」
-→ 判定 F17(自研协议,4–6 周)做不做。
+**M1 底座:搭建 Chromium 构建流水线**(`docs/里程碑.md` M1)。
+
+理由(M0 已判定,ADR-012):M0 证明剩余红项**只有内核层能修**,而
+「驱动层按压 + 参数白名单」那一半 **≤1 周**、不需要自研协议栈。
+**M1 是本项目的真主战场。**
+
+M0 遗留的收尾项(Turnstile 探针 / creepjs 校准 / 机房出口)→ 见 `docs/里程碑.md` M0「未跑满」。
+
+---
+
+## M0 结论摘要(详见 `docs/M0-结论.md`)
+
+同机同出口、`bot-detector.rebrowser.net` 16 项逐测:
+
+| target | 红 | 黄 | 过 |
+|---|---|---|---|
+| `pw-naive`(协议脏/参数脏) | 6 | 2 | 8 |
+| `patchright`(只修协议) | 3 | 2 | 11 |
+| `pw-hardened`(只修参数) | 3 | 0 | 13 |
+| **`patchright-hardened`(都修)** | **2** | **0** | **14** |
+| `cloak`(商业,含内核补丁) | 1 | 2 | 12 |
+| **`ego`(现成「进程内通道」实证)** | **0** | **0** | **16 全绿** |
+
+- 协议层与启动参数层**正交**,两者都必要 → **不能**只做其中一个
+- 但**都不需要自研 IPC 协议栈** → F17 从 4–6 周降级为 **≤1 周**
+- 剩余 2 项红(`useragent` / `headless`)是**内核品牌与无头标识** → 归 M1
+- **`ego` 全绿证明全绿可达**,且给出三层的具体形态(版本真、品牌伪装成 Google Chrome)
+- 独立发现:我方候选**泄漏 WebRTC**(4 个公网候选),Cloak 为 0 → ADR-014
 
 ---
 
@@ -48,9 +74,10 @@
 
 见 `docs/里程碑.md`(唯一正本)。当前:
 
-- **骨架** — ✅ 已验收(双远端已推:GitHub `nakamotosai/ouuut-browser` private / Gitea `sai/ouuut-browser` private)
-- **M0 取证** — 进行中
-- M1 底座 / M2 harness / M3 档案引擎 / M4 通道 / M5 无头服务器 / M6 行为 / M7 分发 — 未开始
+- **骨架** — ✅ 已验收(GitHub `nakamotosai/ouuut-browser` private / Gitea `sai/ouuut-browser` private)
+- **M0 取证** — ✅ **核心目标达成**(F17 已判定 = ADR-012);Turnstile 探针 / creepjs 校准 / 机房出口为遗留
+- **M1 底座** — ⬅ **唯一 next**
+- M2 harness / M3 档案引擎 / M4 通道 / M5 无头服务器 / M6 行为 / M7 分发 — 未开始
 
 ---
 

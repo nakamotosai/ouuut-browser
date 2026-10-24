@@ -111,6 +111,17 @@ def run(br) -> tuple[str, dict]:
     detail["thresholds"] = {"trust_min": TRUST_MIN, "bot_max": BOT_MAX}
     detail["settle_ms"] = SETTLE_MS
     detail["score_element_seen"] = score_appeared
+    if not (
+        re.search(r"trust score", detail.get("cleanText") or "", re.I)
+        or re.search(r"\bbot\b\s*[:\s]\s*\d", detail.get("cleanText") or "", re.I)
+    ):
+        # 如实标注:这一轮**没取到信任分**,所以 verdict=error 不代表「被检测」。
+        # 实测:等待 20s + 45s 元素等待后,6 万字符的干净文本里仍无 "trust" 字样。
+        detail["calibration"] = (
+            "未校准:CreepJS 主页面在本环境下未渲染信任分(元素选择器命中但无文本;"
+            "剥离 base64 后的全文里无 'trust'/'bot:' 字样)。**本项不参与结论**,"
+            "需要另行定位其真实渲染时机或改用其 API 入口。"
+        )
 
     try:
         detail["screenshot"] = br.screenshot("creepjs")
