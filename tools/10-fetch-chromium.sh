@@ -30,6 +30,53 @@ die() { printf '\033[1;31m[fatal] %s\033[0m\n' "$*" >&2; exit 1; }
 # 同一个目录字符串永不相等 —— 任何路径比较前都要过这里。
 norm() { ( cd "$1" 2>/dev/null && pwd -P ); }
 
+# ---- 让 GitHub 出身的依赖走 GitHub,别去挤 googlesource ----
+#
+# 实测(2026-10-24):`gclient sync` 中途被 **HTTP 429** 打断 ——
+#   `chromium.googlesource.com` 的 **匿名共享配额**按 IP 限流,
+#   报 `Short term server-time rate limit exceeded`。而单个 `git ls-remote` 秒回,
+#   说明是「批量克隆把它打爆」,不是不通。
+#
+# `external/github.com/<org>/<repo>` 这类路径本来就是从 GitHub 镜像过去的,
+# 重写回 GitHub 既快(实测 7 MB/s)也不受 Google 配额限制。
+# 用 `--global` 是因为 gclient 的子进程只认全局配置。
+configure_git_mirrors() {
+  local rules=(
+    "https://github.com/|https://chromium.googlesource.com/external/github.com/"
+    "https://github.com/webmproject/|https://chromium.googlesource.com/webm/"
+    "https://github.com/|https://chromium.googlesource.com/v8/"
+  )
+  local r from to have
+  for r in "${rules[@]}"; do
+    to="${r%%|*}"; from="${r##*|}"
+    have="$(git config --global --get "url.${to}.insteadOf" 2>/dev/null || true)"
+    if [ "$have" != "$from" ]; then
+      git config --global --add "url.${to}.insteadOf" "$from"
+      echo "  git 镜像重写:+ ${from} -> ${to}"
+    fi
+  done
+}
+
+# ---- 带重试的 gclient sync ----
+#
+# 上游按 IP 限流时,`gclient` 自己重试几轮后会放弃退出。所以外层再包一层:
+# 每次失败退避后重跑 —— `gclient sync` 是幂等的,已拉好的部分会跳过。
+sync_with_retry() {
+  local attempts="${GCLIENT_SYNC_ATTEMPTS:-5}" i delay=60
+  for i in $(seq 1 "$attempts"); do
+    log "  第 ${i}/${attempts} 次 gclient sync(每次失败后退避 ${delay}s)"
+    if "$GCLIENT" sync --with_branch_heads --with_tags; then
+      return 0
+    fi
+    if [ "$i" -lt "$attempts" ]; then
+      warn "gclient sync 失败(多为上游 429 限流);${delay}s 后重试"
+      sleep "$delay"
+      delay=$((delay * 2))
+    fi
+  done
+  return 1
+}
+
 for d in "/f/depot_tools" "F:/depot_tools" "/c/depot_tools" "C:/depot_tools" "$HOME/depot_tools"; do
   if [ -d "$d" ]; then export PATH="${d}:${PATH}"; DEPOT_TOOLS="$d"; break; fi
 done
@@ -93,12 +140,14 @@ if [ -e "$SRC_DIR" ]; then
   esac
   git -C "$SRC_DIR" rev-parse --verify HEAD >/dev/null 2>&1 \
     || die "${SRC_DIR} 还没 checkout 出任何 commit(残缺的 fetch)。确认后再决定是否删掉重跑。"
-  log "校验通过;跟版请用 tools/20-rebase.sh"
-  exit 0
+  log "校验通过 —— 跳过克隆,直接续 sync(本脚本幂等,已拉好的会跳过)"
+  NEED_CLONE=0
+else
+  NEED_CLONE=1
 fi
 
 # ---- .gclient(内容与 fetch chromium 生成的一致)------------------------------
-log "1/3 写 .gclient"
+log "1/4 写 .gclient"
 if [ -e "$GCLIENT_FILE" ]; then
   log "  .gclient 已存在,保留原样"
 else
@@ -117,7 +166,7 @@ EOF
 fi
 
 # ---- clone ------------------------------------------------------------------
-log "2/3 git clone chromium/src"
+log "2/4 git clone chromium/src"
 echo "  来源:${SRC_URL}"
 mkdir -p "$CHROMIUM_DIR"
 # `--depth=1`:只取目标 tag 那一个 commit。Chromium 的完整历史对我们是纯负担
@@ -130,15 +179,25 @@ mkdir -p "$CHROMIUM_DIR"
 #   原因是 blobless 克隆要按需拉 10 万+ 个 blob,在这条链路上不现实。
 #   不加 filter 就是一次把该 commit 的 blob 全拉下来(约 2 GB),可预测得多;
 #   而且 `git apply --3way` 需要的基对象一定在本地。
-git clone --branch "$CHROMIUM_TAG" --depth=1 "$SRC_URL" "$SRC_DIR" \
-  || die "克隆失败或 tag ${CHROMIUM_TAG} 不存在于 ${SRC_URL}"
-cd "$SRC_DIR"
-printf '  已 checkout:%s  文件数:%s\n' \
-  "$(git describe --tags --always 2>/dev/null || echo '?')" "$(git ls-files | wc -l)"
+if [ "$NEED_CLONE" -eq 1 ]; then
+  git clone --branch "$CHROMIUM_TAG" --depth=1 "$SRC_URL" "$SRC_DIR" \
+    || die "克隆失败或 tag ${CHROMIUM_TAG} 不存在于 ${SRC_URL}"
+  cd "$SRC_DIR"
+  printf '  已 checkout:%s  文件数:%s\n' \
+    "$(git describe --tags --always 2>/dev/null || echo '?')" "$(git ls-files | wc -l)"
+else
+  log "  (跳过克隆;SRC_DIR 已存在且校验通过)"
+fi
 
-log "3/3 gclient sync(拉依赖,约 50 GB)"
+log "3/4 配置 git 镜像重写"
+configure_git_mirrors
+
+log "4/4 gclient sync(拉依赖,约 50 GB;上游按 IP 限流,带重试)"
 cd "$CHROMIUM_DIR"
-"$GCLIENT" sync --with_branch_heads --with_tags
+sync_with_retry || die "gclient sync 连续多次失败 —— 多半是上游 429 限流未缓解。
+  可以:① 稍后重跑本脚本(gclient sync 幂等,已拉好的会跳过);
+        ② 换出口 IP 再跑(限流是按 IP 的);
+        ③ 用更小的并发:GCLIENT_SYNC_ATTEMPTS=8 重跑。"
 
 log "完成"
 echo "源码:${SRC_DIR}"
