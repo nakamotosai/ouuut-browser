@@ -1,0 +1,107 @@
+# probe · M0 检测基准探针
+
+> **M0 的唯一执行目录。** 目标不是「拿高分」,是回答一个**差分问题**:
+> **「按住 `Runtime.enable` 是否已足够过检测」**(ADR-003 / ADR-005)。
+> 契约纪律:见 `AGENTS.md`;方法纪律:见 ADR-011(同机同代理同时间窗)。
+
+---
+
+## 一、为什么是「对照矩阵」而不是「绝对分数」
+
+绝对分数受网络、代理、检测站版本、时间影响极大。**差分**才能把「工具差异」从
+「环境噪声」里分离出来。所以每次运行都产出**矩阵**,不是一个数字。
+
+**唯一可信的比较方式**:同一轮运行内,所有 target 走**同一个出口**、同一时间窗。
+
+---
+
+## 二、出口(egress)
+
+**resin 轮换池不能用于本探针** —— 实测 8 次请求换 8 个出口 IP,页面加载期就会出现
+多个 IP,既是巨大噪声也是巨大破绽。
+
+用**单个 `bind-socks5` 节点**(固定出口,实测 STICKY):
+
+| 代号 | 出口 | 说明 |
+|---|---|---|
+| `direct` | 本机直连(JP 住宅/ISP 段) | 主要条件:最接近真实用户,CDP 信号最容易显出来 |
+| `pin-jp-41105` | `socks5://198.51.100.7:41105` → `161.33.5.222` | 生产意图条件:机房段 |
+
+`direct` 与 `pin-*` 都要跑 —— **若两边结论相反,那本身就是一个发现**(说明 IP 段压制了 CDP 信号)。
+
+---
+
+## 三、契约
+
+### 3.1 被测对象(target)
+
+每个 target 适配器实现 `probe/base.py` 的 `BrowserFacade`:
+
+```python
+def launch(spec: LaunchSpec) -> Iterator[BrowserFacade]   # 上下文管理器
+```
+
+`LaunchSpec`:`profile_dir`(每 target × 每 egress 一个干净档案)/ `proxy` / `headless`。
+
+| 代号 | 被测对象 | 为什么在矩阵里 |
+|---|---|---|
+| `pw-naive` | 裸 Playwright(chromium) | **基线**:发 `Runtime.enable`、留全部 CDP 痕迹 |
+| `patchright` | patchright(rebrowser 补丁的 Python 版) | **核心对照**:按住 `Runtime.enable` 的公开修法 |
+| `cloak` | CloakBrowser | 商业反检测对照 |
+| `ego` | ego lite | 「进程内通道 + 不发 `Runtime.enable`」的实证(REA B1/B2) |
+| `ouuut` | 我方(将来) | M2 之后接入 |
+
+### 3.2 检测站(site)
+
+每个 site 实现:
+
+```python
+class Site:
+    name: str
+    url: str
+    def run(self, br: BrowserFacade) -> tuple[str, dict]   # (verdict, detail)
+```
+
+`verdict` 只允许三个值:**`passed`** / **`detected`** / **`error`**。
+`detail` 放原始证据(检测站自己报的字段),不许只放结论。
+
+| 代号 | URL | 回答什么 |
+|---|---|---|
+| `bot-detector` | `bot-detector.rebrowser.net` | **最直接**:CDP 泄漏项逐条 |
+| `creepjs` | `abrahamjuliot.github.io/creepjs` | 指纹一致性(trust score) |
+| `browserleaks` | `browserleaks.com` | WebRTC / Canvas / WebGL / 字体 |
+| `turnstile` | Cloudflare Turnstile demo | 实战门槛(能不能过) |
+
+### 3.3 产物
+
+```
+probe/out/<run-id>/
+  matrix.json          # 全部结果
+  matrix.md            # 人读表格
+  screenshots/<target>-<site>-<egress>.png
+  run.log
+```
+
+`matrix.json` 每行 = 一个 `probe.base.Result`。
+
+---
+
+## 四、运行
+
+```bash
+PY=probe/.venv/Scripts/python.exe
+$PY probe/run.py --targets pw-naive,patchright --sites bot-detector --egress direct
+$PY probe/run.py --all            # 全矩阵
+```
+
+**回归纪律**:任何 target 或 site 的改动,必须重跑并对比 `matrix.json` 的差异;
+结果变化要能解释。
+
+---
+
+## 五、红线
+
+- 本目录的脚本**只用于自检与竞品对照**,不针对任何真实业务站点
+- **不做**验证码破解、不做定向绕过(法律红线 L3);`turnstile` 站点只用来**观测**
+  我方是否被拦,**不实现任何破解逻辑**
+- 探针每次使用**全新的空档案**,不携带任何登录态

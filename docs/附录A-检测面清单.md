@@ -14,7 +14,7 @@
 | **栈帧命名泄漏** | Puppeteer 注入 `//# sourceURL=pptr:...`;Playwright 经 `UtilityScript` 类执行 `evaluate`,页面 `new Error().stack` 可见 | 默认可见 | 随机化辅助类名 + 偏移行号;或自研通道不产生此类帧 |
 | **执行世界名泄漏** | 默认世界名 `__puppeteer_utility_world__<版本>` | 默认可见 | 随机化世界名 |
 | **启动开关泄漏** | `--disable-popup-blocking` / `--disable-ipc-flooding-protection` / `--disable-features=ThirdPartyStoragePartitioning` 会改变可观察行为 | Playwright 默认带 | 移除,恢复真实用户行为 |
-| **`navigator.webdriver`** | 自动化启动即为 true | Playwright 默认 false(1.64 起已移除 `--enable-automation`) | 内核层硬编码为 false,不依赖开关 |
+| **`navigator.webdriver`** | 自动化启动即为 true | **实测修正(2026-10-24)**:Playwright 1.64.1 **默认无头**时 `navigator.webdriver === true` —— 因为默认走 `chrome-headless-shell`(详见 `docs/M0-结论.md` §1.1)。旧表述「1.64 起已移除 `--enable-automation` 故为 false」**已作废**:移除了开关不等于值为 false | 内核层硬编码为 false;驱动层可加 `--disable-blink-features=AutomationControlled`(实测生效) |
 
 > ⚠️ **反直觉但关键**:JS 注入式隐身插件(`puppeteer-extra-plugin-stealth`)会让情况**变坏** ——
 > 它会点亮 `nativeTampering` 与 `workerConsistency` 两项。ouuut 的补丁**必须在内核 C++ 层**,
