@@ -70,6 +70,11 @@ MIRROR_RULES=(
   # `google/cld3`(无下划线)—— 前缀重写必然 404。注意**不能**排除整个 `google/`:
   # 同子树下的 `google/pthreadpool` 在 GitHub 上是真实存在的。
   "https://chromium.googlesource.com/external/github.com/google/cld_3.git|https://chromium.googlesource.com/external/github.com/google/cld_3.git"
+  # 这一类是**仓库存在但缺 DEPS 钉的那个 revision**(gclient 报
+  # `upload-pack: not our ref <sha>`)。工具会对每个被重写依赖浅 fetch 它的钉 rev 来发现。
+  # googlesource 的镜像与 GitHub 上游**历史不一定一致**,所以这类必须留在 googlesource:
+  "https://chromium.googlesource.com/external/github.com/GPUOpen-LibrariesAndSDKs/|https://chromium.googlesource.com/external/github.com/GPUOpen-LibrariesAndSDKs/"
+  "https://chromium.googlesource.com/external/github.com/WebKit/|https://chromium.googlesource.com/external/github.com/WebKit/"
 )
 
 export_git_mirror_env() {

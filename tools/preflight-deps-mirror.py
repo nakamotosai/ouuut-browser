@@ -35,6 +35,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import warnings
 
@@ -62,6 +63,16 @@ MIRROR_RULES: list[tuple[str, str]] = [
     (
         "https://chromium.googlesource.com/external/github.com/google/cld_3.git",
         "https://chromium.googlesource.com/external/github.com/google/cld_3.git",
+    ),
+    # 这两类:仓库存在但**缺 DEPS 钉的 revision**
+    # (googlesource 镜像与 GitHub 上游历史不一致 → gclient 报 `not our ref`)
+    (
+        "https://chromium.googlesource.com/external/github.com/GPUOpen-LibrariesAndSDKs/",
+        "https://chromium.googlesource.com/external/github.com/GPUOpen-LibrariesAndSDKs/",
+    ),
+    (
+        "https://chromium.googlesource.com/external/github.com/WebKit/",
+        "https://chromium.googlesource.com/external/github.com/WebKit/",
     ),
 ]
 
@@ -122,10 +133,12 @@ def strip_rev(url: str) -> tuple[str, str]:
 # `v8` / `skia` / `webrtc` / `pdfium` 判成「嵌套依赖不可达」,
 # 而照那份名单跳过会直接把核心构建依赖砍掉。
 OK = "ok"
-NOT_FOUND = "not_found"  # 可以安全跳过
+NOT_FOUND = "not_found"  # 仓库不存在 —— 可以安全跳过
+REV_MISSING = "rev_missing"  # 仓库在,但**没有 DEPS 钉的那个 revision** —— 同样是重写造成的
 UNCERTAIN = "uncertain"  # 限流/超时/未知 —— **不许**据此跳过
 
 _NOT_FOUND_HINTS = ("not found", "404")
+_REV_HINTS = ("not our ref", "couldn't find remote ref", "no such remote ref", "remote ref")
 _RATE_HINTS = ("429", "rate limit", "resource has been exhausted", "quota")
 
 
@@ -138,6 +151,56 @@ def _classify(returncode: int, err: str) -> str:
     if any(h in low for h in _RATE_HINTS):
         return UNCERTAIN
     return UNCERTAIN
+
+
+def check_rev(url: str, rev: str, timeout: int = 120) -> str:
+    """验证**钉住的 revision** 在镜像里是否存在。
+
+    为什么必须做这一步:仓库可达 ≠ 有那个 commit。实测踩过 ——
+    `WebKit/Speedometer` 与 `GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator`
+    的 GitHub 仓库都存在,但**没有 DEPS 钉的那两个 rev**,
+    gclient 报 `upload-pack: not our ref <sha>`。
+    只查「仓库在不在」的工具**发现不了这一整类**。
+
+    做法就是 gclient 自己做的那个操作:浅 fetch 指定 sha 到一个临时空仓库。
+    加 `--filter=blob:none` 让它只取 commit/tree 对象,快很多。
+    """
+    if not rev:
+        return OK
+    with tempfile.TemporaryDirectory(prefix="preflight-") as td:
+        subprocess.run(["git", "init", "-q", "--bare", td], capture_output=True, text=True, timeout=60)
+        try:
+            r = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    td,
+                    "-c",
+                    "core.deltaBaseCacheLimit=2g",
+                    "fetch",
+                    "--depth=1",
+                    "--no-tags",
+                    "--filter=blob:none",
+                    url,
+                    rev,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"},
+            )
+        except subprocess.TimeoutExpired:
+            return UNCERTAIN
+        except Exception:
+            return UNCERTAIN
+        if r.returncode == 0:
+            return OK
+        err = ((r.stderr or "") + (r.stdout or "")).lower()
+        if any(h in err for h in _REV_HINTS):
+            return REV_MISSING
+        if any(h in err for h in _NOT_FOUND_HINTS):
+            return NOT_FOUND
+        return UNCERTAIN
 
 
 def check(url: str, timeout: int = 45, attempts: int = 3) -> tuple[str, str, str]:
@@ -221,7 +284,12 @@ def main() -> int:
                 nested_urls.add(rewrite(url))
 
     rows = []
-    for path, raw in deps.items():
+    for path, raw_entry in deps.items():
+        # DEPS 条目有两种形态:纯字符串,或 `{"url": ..., "condition": ...}`。
+        # 实测踩过:只处理字符串形式会**漏掉带条件的依赖** ——
+        # `src/third_party/speedometer/v2.0` 正是 dict 形式,于是它没被检查到,
+        # 直到 gclient 报 `not our ref` 才发现。
+        raw = raw_entry.get("url", "") if isinstance(raw_entry, dict) else raw_entry
         if not isinstance(raw, str) or "chromium.googlesource.com" not in raw:
             continue
         url, rev = strip_rev(raw)
@@ -242,8 +310,23 @@ def main() -> int:
         for url, verdict, err in ex.map(check, sorted(uniq)):
             results[url] = (verdict, err)
 
+    # 对**被重写且有钉 rev**的依赖,再验一次「镜像里到底有没有那个 revision」。
+    # 只查「仓库在不在」会漏掉一整类(gclient 报 `upload-pack: not our ref <sha>`)。
+    rev_rows = [r for r in rows if r["rewritten"] and r["rev"]]
+    rev_results: dict[str, str] = {}
+    if rev_rows:
+        if not args.emit_skips:
+            print(f"再验 {len(rev_rows)} 个被重写依赖的**钉住 revision** …\n")
+        with cf.ThreadPoolExecutor(max_workers=max(4, args.workers // 2)) as ex:
+            pairs = [(r["mirror"], r["rev"]) for r in rev_rows]
+            for (mirror, _rev), verdict in zip(pairs, ex.map(lambda p: check_rev(*p), pairs), strict=False):
+                rev_results[mirror] = verdict
+
     def vd(url: str) -> str:
         return results[url][0]
+
+    def rev_vd(r: dict) -> str:
+        return rev_results.get(r["mirror"], OK)
 
     # 只保留「嵌套依赖**确认不存在**」的父目录。
     # uncertain(限流/超时)一律不算 —— 那是本次探测的问题,不是仓库的问题。
@@ -251,6 +334,9 @@ def main() -> int:
 
     bad = [r for r in rows if vd(r["mirror"]) == NOT_FOUND]
     uniq_bad = sorted({x["path"]: x for x in bad}.values(), key=lambda x: x["path"])
+    rev_bad = sorted(
+        {x["path"]: x for x in rev_rows if rev_vd(x) == REV_MISSING}.values(), key=lambda x: x["path"]
+    )
     uncertain = sorted({u for u in uniq if vd(u) == UNCERTAIN})
 
     # 给脚本用的纯净输出:只要**顶层** DEPS 里确认不存在的跳过行。
@@ -287,6 +373,22 @@ def main() -> int:
             print(f"      #   ^ {results[r['mirror']][1]}")
     else:
         print("✅ 所有需要重写的依赖在镜像上都可达,不需要跳过名单")
+
+    if rev_bad:
+        print("\n" + "=" * 78)
+        print("⚠️ 以下依赖的**仓库在镜像上存在,但没有 DEPS 钉的那个 revision**")
+        print("   (gclient 会报 `upload-pack: not our ref <sha>`)")
+        print("   **正解是加一条「排除规则」让它从 googlesource 拉**(不是跳过):")
+        print("=" * 78)
+        for r in rev_bad:
+            orig = r["orig"]
+            # 建议排除到 org 一级(前缀),这样同 org 下别的仓库也一起受益
+            m = re.match(r"(https://chromium\.googlesource\.com/external/github\.com/[^/]+/)", orig)
+            prefix = m.group(1) if m else orig
+            print(f"  {r['path']}")
+            print(f"      {r['mirror']}   ← 镜像缺 rev {r['rev'][:12]}")
+            print("      建议加到 MIRROR_RULES 的「排除」区:")
+            print(f'        "{prefix}|{prefix}"')
 
     if nested_bad:
         print("\n" + "=" * 78)
