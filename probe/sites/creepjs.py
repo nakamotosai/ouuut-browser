@@ -43,19 +43,26 @@ from probe.base import VERDICT_DETECTED, VERDICT_ERROR, VERDICT_PASSED, Site, re
 
 URL = "https://abrahamjuliot.github.io/creepjs/"
 SETTLE_MS = 25000
-# Headless 段的等级 —— 只在「没有任何 tell 命中」时作参考,不单独用它判 detected
-GRADE_SUSPICIOUS = 80
 
-# 这些 tell 为 true 时,说明浏览器带有 headless / 自动化特征
+# 判定阈值(显式、可复算)。
+# 该段的等级是**站点自己算的 headless 相似度**;实测四个被测对象的分离度很干净:
+#   pw-naive 88% · patchright-hardened 38% · cloak 25% · ego 19%
+# 所以取 50% 作分界。改阈值必须同时改 probe/README.md 的方法说明。
+GRADE_DETECTED = 50
+
+# 这些 tell 为 true 时说明浏览器带 headless / 自动化特征(名字与该站输出一致)
 HEADLESS_TELLS = {
-    "nochrome": "window.chrome 缺失(桌面 Chrome 一定有)",
-    "noplugins": "navigator.plugins 为空",
-    "nomimetypes": "navigator.mimeTypes 为空",
-    "notificationisdenied": "Notification.permission 被拒而 permissions.query 说 prompt",
-    "haspermissionsbug": "permissions API 行为与真实 Chrome 不一致",
-    "hasheadlessworkerua": "Web Worker 里带 headless UA",
-    "hasheadlessua": "UA 里带 headless",
-    "nodownlinkmax": "NetworkInformation.downlinkMax 缺失",
+    "noChrome": "window.chrome 缺失(桌面 Chrome 一定有)",
+    "noPlugins": "navigator.plugins 为空",
+    "noMimeTypes": "navigator.mimeTypes 为空",
+    "notificationIsDenied": "Notification.permission 被拒而 permissions.query 说 prompt",
+    "hasPermissionsBug": "permissions API 行为与真实 Chrome 不一致",
+    "hasHeadlessWorkerUa": "Web Worker 里带 headless UA",
+    "hasHeadlessUa": "UA 里带 headless",
+    "noDownlinkMax": "NetworkInformation.downlinkMax 缺失",
+    "hasBadWebgl": "WebGL 渲染器异常",
+    "uaDataIsBlank": "userAgentData 为空",
+    "pdfIsDisabled": "PDF 查看器被禁用",
 }
 
 _EXTRACT_JS = r"""
@@ -74,12 +81,19 @@ _EXTRACT_JS = r"""
   const text = norm(clone.textContent);
   out.textLen = text.length;
 
-  // 1) 布尔 tell:形如 `name: true` / `name: false`,名字是驼峰或全小写字母
+  // 1) 按**已知名字逐个查**,不做通用词法切分。
+  // 原因:该站把名字**粘连**输出(例如 `× Like HeadlessnoChrome: true`),
+  // 通用正则 `\b(\w+):\s*(true|false)` 会把前缀吃进名字里
+  // —— 实测抓到过 `truehasheadlessworkerua` 这种错键。
+  // 逐个名字查子串就绕开了粘连问题。
+  const tellNames = ["noChrome", "hasPermissionsBug", "noPlugins", "noMimeTypes",
+                     "notificationIsDenied", "hasHeadlessWorkerUa", "hasHeadlessUa",
+                     "noDownlinkMax", "hasBadWebgl", "uaDataIsBlank", "pdfIsDisabled",
+                     "hasKnownBgColor", "prefersLightColor"];
   const tells = {};
-  const reTell = /\b([A-Za-z][A-Za-z]{3,30})\s*:\s*(true|false)\b/g;
-  let m;
-  while ((m = reTell.exec(text)) !== null) {
-    tells[m[1].toLowerCase()] = m[2] === 'true';
+  for (const name of tellNames) {
+    const mm = text.match(new RegExp(name + "\\s*:\\s*(true|false)", "i"));
+    if (mm) tells[name] = (mm[1].toLowerCase() === 'true');
   }
   out.tells = tells;
 
@@ -101,17 +115,14 @@ _EXTRACT_JS = r"""
 
 def _classify(detail: dict) -> str:
     tells = detail.get("tells") or {}
-    hits = {k: v for k, v in tells.items() if v and k in HEADLESS_TELLS}
     grade = detail.get("headlessGrade")
 
-    if not tells and grade is None:
-        return VERDICT_ERROR  # 一条 tell 都没抓到 → 探针无效
-    if hits:
-        return VERDICT_DETECTED
-    if grade is not None and grade >= GRADE_SUSPICIOUS:
-        # 等级高但没有 tell 命中 —— 不据此判 detected(会冤枉人);留在 detail 里供人看
-        return VERDICT_PASSED
-    return VERDICT_PASSED
+    if grade is None and not tells:
+        return VERDICT_ERROR  # 什么都没抓到 → 探针无效(不等于通过)
+    if grade is not None:
+        return VERDICT_DETECTED if grade >= GRADE_DETECTED else VERDICT_PASSED
+    # 没有等级时退回到 tell:任一 headless 特征的 tell 为 true 即为 detected
+    return VERDICT_DETECTED if any(v for k, v in tells.items() if k in HEADLESS_TELLS) else VERDICT_PASSED
 
 
 def run(br) -> tuple[str, dict]:
@@ -125,11 +136,12 @@ def run(br) -> tuple[str, dict]:
     detail["headlessHits"] = {
         k: {"value": v, "why": HEADLESS_TELLS[k]} for k, v in tells.items() if v and k in HEADLESS_TELLS
     }
+    detail["thresholds"] = {"grade_detected": GRADE_DETECTED}
     detail["settle_ms"] = SETTLE_MS
 
     if not tells and detail.get("headlessGrade") is None:
         detail["calibration"] = (
-            "未校准:一条布尔 tell 都没抓到。该站渲染形态可能又变了 —— "
+            "未校准:等级与 tell 都没抓到。该站渲染形态可能又变了 —— "
             "先用 probe/tools/recon_site.py 重看结构。本项不参与结论。"
         )
 

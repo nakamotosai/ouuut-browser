@@ -31,7 +31,8 @@
 |---|---|---|
 | `userAgentData.brands` 里要有 `Google Chrome` | `docs/M0-结论.md` §2.2;ego 的实测形态 | 纯 Chromium 不带这个品牌,`pw-*` 三个 target 全红 |
 | UA 去掉 `HeadlessChrome` | 同上 | Playwright/Chromium 无头模式的固有标识 |
-| 补 `window.chrome`(无头时缺失) | 同上 | headless-shell 特征 |
+| **Web Worker 里的 UA 也要去掉 headless** | `docs/M0-结论.md` §1.3(creepjs) | **实测**:`patchright-hardened` 在主文档侧已被 `channel="chromium"` 修好(`noChrome` 等 tell 全 false),但 creepjs 仍抓到 **worker UA 带 headless**,等级 38%(未修的是 88%)。**只改主文档 UA 不够** |
+| 补 `window.chrome`(无头时缺失) | M0 §2.2 | headless-shell 特征 |
 | WebGL 渲染器不要是 SwiftShader | 同上 | 软件渲染一眼假 |
 
 **注意**:`navigator.webdriver` / `--disable-ipc-flooding-protection` /
