@@ -33,6 +33,7 @@
 // §4.1 的**文本化简已做**,在 `snapshot-simplify.mjs`(独立、纯粹、可脱离 CDP 测)
 
 import { normalizeAxNodes, simplifyTree, renderSimplified } from "./snapshot-simplify.mjs";
+import { createRefAllocator, assignRefs } from "./snapshot-refs.mjs";
 
 const MAX_DEFAULT = 20_000;
 
@@ -101,26 +102,41 @@ export function buildHeader({ label, title, space, tabs = [] }) {
 }
 
 /**
+ * 从 CDP 的 AX 扁平行走到"可渲染的简化树 + ref 分配器"。
+ *
+ * `renderAxTree` 与 `buildSnapshot` **共用**这一条流程 —— 两条路各写一遍的话,
+ * §4.1 规则 4(带 ref 的 container 要保留)会在其中一条里悄悄失效。
+ *
+ * 顺序有讲究:**先分配 ref,再化简**。反过来的话化简时看不到 ref,
+ * 那条"保留带 ref 的 container"就永远不触发。
+ */
+function buildPipeline(nodes, { frameId = null } = {}) {
+  const { root } = normalizeAxNodes(nodes, roleToToken);
+  if (!root) return null;
+  const allocator = createRefAllocator();
+  const withRefs = assignRefs(root, { allocator, frameId });
+  return { simplified: simplifyTree(withRefs), allocator };
+}
+
+/**
  * 把 CDP 的 AX 树渲染成缩进文本。
  *
  * @param {Array} nodes `Accessibility.getFullAXTree` 的 `nodes`
  * @param {object} [opts]
  * @param {number} [opts.maxLength] 结果上限(超过就截断,并明说截断了)
  * @param {number} [opts.maxDepth]  深度上限(防御性:某些页面 AX 树极深)
+ * @param {string|null} [opts.frameId] 这棵树属于哪个 frame
  */
-export function renderAxTree(nodes, { maxLength = MAX_DEFAULT, maxDepth = 64 } = {}) {
+export function renderAxTree(nodes, { maxLength = MAX_DEFAULT, maxDepth = 64, frameId = null } = {}) {
   if (!Array.isArray(nodes) || nodes.length === 0) return "";
 
-  // 三段式:`规范形状 → §4.1 化简 → 缩进渲染`。
+  // 三段式:`规范形状 → 分配 ref → §4.1 化简 → 缩进渲染`。
   // 以前这里是一趟自带"跳过空叶子"逻辑的遍历 —— 那等于把 §4.1 的规则
-  // **隐式**写在渲染里,既测不了也改不动。现在规则集中在 `snapshot-simplify.mjs`,
-  // 本函数只剩"接线"。
-  const { root } = normalizeAxNodes(nodes, roleToToken);
-  if (!root) return "";
-  const simplified = simplifyTree(root);
-  if (!simplified) return "";
+  // **隐式**写在渲染里,既测不了也改不动。规则现在集中在 `snapshot-simplify.mjs`。
+  const built = buildPipeline(nodes, { frameId });
+  if (!built?.simplified) return "";
 
-  let text = renderSimplified(simplified, { maxDepth });
+  let text = renderSimplified(built.simplified, { maxDepth });
   if (text.length > maxLength) {
     // **明说被截断了** —— 静默截断会让 agent 以为自己看到了全貌
     text = text.slice(0, maxLength) + "\n...(快照被 maxResultLength 截断)";
@@ -131,8 +147,16 @@ export function renderAxTree(nodes, { maxLength = MAX_DEFAULT, maxDepth = 64 } =
 /**
  * 完整快照:`{content, refs}`。**对象,不是字符串** ——
  * 压缩是 JS 侧(harness)做的,见 `native/README.md` §二.2。
+ *
+ * 流程:`规范形状 → 分配 ref(§4.2)→ §4.1 化简 → 缩进渲染`。
+ *
+ * **分配必须在化简之前**:§4.1 规则 4 要"保留**带 ref 的** container" ——
+ * 先化简的话那个判据永远看不到 ref,规则就死了。
+ *
+ * @param {object} o
+ * @param {string|null} [o.frameId] 这棵 AX 树属于哪个 frame(OOPIF 用它的 target id)
  */
-export async function buildSnapshot({ cdp, header, options = {}, timeoutMs = 15_000 }) {
+export async function buildSnapshot({ cdp, header, options = {}, timeoutMs = 15_000, frameId = null }) {
   // `maxResultLength` 是 harness 用的名字(`page-model.ts:704` 传 1 做廉价探针)
   const maxLength = Number.isFinite(options?.maxResultLength)
     ? options.maxResultLength
@@ -145,7 +169,10 @@ export async function buildSnapshot({ cdp, header, options = {}, timeoutMs = 15_
   }
 
   const res = await cdp.send("Accessibility.getFullAXTree", {}, { timeoutMs });
-  const body = renderAxTree(res?.nodes ?? [], { maxLength });
+  const built = buildPipeline(res?.nodes ?? [], { frameId });
+  if (!built?.simplified) return { content: header ?? "", refs: {} };
+
+  const body = renderSimplified(built.simplified, { maxDepth: 64 }).slice(0, maxLength);
   const content = header ? `${header}\n${body}` : body;
-  return { content, refs: {} }; // refs 见文件头"没做的"
+  return { content, refs: built.allocator.snapshot() };
 }

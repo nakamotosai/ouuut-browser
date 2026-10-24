@@ -298,3 +298,35 @@ export function auditNoTcpDebugPort(argv) {
   const bad = list.filter((a) => typeof a === "string" && /^--remote-debugging-port(=|$)/.test(a));
   return { ok: bad.length === 0, offenders: bad };
 }
+
+// ---- 拍快照期间的额外禁令(§4.2)-------------------------------------------
+//
+// §4.2 最后一条:「拍快照**不得**激活 / focus / reload 任何 frame」。
+//
+// 这与上面那份"始终拦"的清单是**两件事**:`Page.reload` 平时有正当用途
+// (agent 确实可能想刷新),但**拍快照期间**一条都不能发 —— 否则你拍到的
+// 是"你刚把人家弄成什么样"而不是"人家本来什么样"。
+//
+// 所以这里单独一个函数,调用方在快照阶段用它审命令流。
+
+/** 拍快照期间禁止的命令。与 `snapshot-refs.mjs` 的 `SNAPSHOT_FORBIDDEN` 同源。 */
+// 注意:`export { X } from "..."` 只做**再导出**,**不会**在本文件里建局部绑定。
+// 下面这个默认参数需要局部绑定,所以必须真 import 一次。
+import { SNAPSHOT_FORBIDDEN as SNAPSHOT_FORBIDDEN_LIST } from "./snapshot-refs.mjs";
+export { SNAPSHOT_FORBIDDEN } from "./snapshot-refs.mjs";
+
+/**
+ * 审一段"快照期间"的命令流。
+ * @param {Array<{method:string}>} commands
+ * @param {string[]} [forbidden] 默认用 `SNAPSHOT_FORBIDDEN`
+ */
+export function auditSnapshotPhase(commands, forbidden = SNAPSHOT_FORBIDDEN_LIST) {
+  const list = Array.isArray(commands) ? commands : [];
+  const bad = [];
+  for (const [i, c] of list.entries()) {
+    if (forbidden.includes(c?.method)) {
+      bad.push({ index: i, method: c.method, reason: "拍快照期间不得激活/focus/reload 任何 frame(§4.2)" });
+    }
+  }
+  return { ok: bad.length === 0, violations: bad, total: list.length };
+}
