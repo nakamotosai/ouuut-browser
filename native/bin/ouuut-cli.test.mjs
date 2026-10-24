@@ -73,10 +73,29 @@ test("启动参数:proxy 会带 bypass 列表(loopback 与 tailnet 不走代理)
   assert.ok(bypass.includes("*.ts.net"));
 });
 
-test("启动参数:默认有头,且不给 user-data-dir 时不编造一个", () => {
+test("启动参数:**默认给一个本会话专用的档案目录**(不贴使用者的真实 Chrome)", () => {
   const { args } = buildBrowserArgs({}, {});
-  assert.ok(!args.some((a) => a.startsWith("--headless")));
-  assert.ok(!args.some((a) => a.startsWith("--user-data-dir")), "没给就别编 —— 免得动到用户真实档案");
+  // 实测结论(2026-10-25):不传 `--user-data-dir` 时,新实例会去用
+  // `%LOCALAPPDATA%\Google\Chrome\User Data` —— 与使用者正在运行的真实 Chrome 同一个,
+  // 于是交接给已运行实例后自己退出(code=0),表现为 listTabs 报「ouuut 退出」。
+  const udd = args.find((a) => a.startsWith("--user-data-dir="));
+  assert.ok(udd, "必须给 --user-data-dir,否则会去贴使用者的真实档案");
+  const dir = udd.slice("--user-data-dir=".length);
+  assert.ok(path.isAbsolute(dir), "必须是绝对路径");
+  assert.ok(dir.includes("ouuut-session-"), `目录名该带会话标记,得到 ${dir}`);
+  assert.ok(!/Google[\\/]Chrome[\\/]User Data/i.test(dir), "绝不能落在使用者的 Chrome 档案目录里");
+});
+
+test("默认档案目录带 pid,同机多会话互不干扰", () => {
+  const a = buildBrowserArgs({ pid: 111 }, {}).args.find((x) => x.startsWith("--user-data-dir="));
+  const b = buildBrowserArgs({ pid: 222 }, {}).args.find((x) => x.startsWith("--user-data-dir="));
+  assert.notEqual(a, b, "两个会话抢同一个 user-data-dir 会造成同样的『交接后退出』");
+});
+
+test("启动参数:显式给了 user-data-dir 就用给的(留给 real 档案导入)", () => {
+  const { args } = buildBrowserArgs({ userDataDir: "D:/my-profile" }, {});
+  assert.ok(args.includes("--user-data-dir=D:/my-profile"));
+  assert.equal(args.filter((a) => a.startsWith("--user-data-dir=")).length, 1, "不能出现两个");
 });
 
 test("启动参数:浏览器路径优先 --browser,其次 OUUUT_BROWSER,最后本仓默认产物", () => {

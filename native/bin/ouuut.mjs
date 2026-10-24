@@ -67,7 +67,7 @@ export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.ar
       async disposeHarness() {
         try {
           const mod = await import(
-            new URL("../../../harness/package/ego-browser/dist/src/index.js", import.meta.url).href
+            new URL("../../harness/package/ego-browser/dist/src/index.js", import.meta.url).href
           );
           if (typeof mod.disposeEgoSdk === "function") await mod.disposeEgoSdk();
         } catch {
@@ -89,8 +89,26 @@ export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.ar
   return result;
 }
 
+/**
+ * 把 stdin 读干。**必须由我们读,不能让它自己去读** ——
+ * 实测:直接 `runMain()` 让它读 `process.stdin` 会读到空,于是它打出自己的 USAGE 退出。
+ * 自己读还有一个好处:可以在**起浏览器之前**就拿到脚本,便于校验与测试。
+ */
+export async function readStdin(stream = process.stdin) {
+  const chunks = [];
+  for await (const c of stream) chunks.push(typeof c === "string" ? Buffer.from(c) : c);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /** CLI 主入口。`opts.runScript` 由调用方给(测试里可以换成直接跑函数)。 */
-export async function cli({ argv = process.argv.slice(2), spawn, runScript, stdout = process.stdout, env = process.env } = {}) {
+export async function cli({
+  argv = process.argv.slice(2),
+  spawn,
+  runScript,
+  stdout = process.stdout,
+  env = process.env,
+  stdin = process.stdin,
+} = {}) {
   const opts = parseArgs(argv);
   if (opts.help) {
     stdout.write(USAGE + "\n");
@@ -100,17 +118,23 @@ export async function cli({ argv = process.argv.slice(2), spawn, runScript, stdo
     process.stderr.write(`[ouuut] ${opts.error}\n\n${USAGE}\n`);
     return 2;
   }
+  // 脚本从 stdin 读(`ouuut nodejs < script`)。**在读之前不要起浏览器** ——
+  // 免得因为脚本为空白起一次浏览器(而硬杀的浏览器会锁住 chrome.dll,见坑-23)。
+  const stdinText = typeof runScript === "function" ? null : await readStdin(stdin);
   await withRuntime({
     argv,
     spawn,
     env,
     async run({ api, registry, options }) {
       if (typeof runScript === "function") return runScript({ api, registry, options });
-      // 默认行为:把 stdin 当 heredoc 脚本交给 harness 的 runMain
+      // 交给 harness 的 runMain,并把脚本**显式**传进去
       const mod = await import(
-        new URL("../../../harness/package/ego-browser/dist/src/run.js", import.meta.url).href
+        new URL("../../harness/package/ego-browser/dist/src/run.js", import.meta.url).href
       );
-      return mod.runMain();
+      // 交给 harness 的 runMain,并把脚本**显式**传进去。
+      // `argv` 给空数组:`ouuut` 自己的选项已经被 `parseArgs` 消费掉了,
+      // 把 `["nodejs"]` 原样转给脚本只会让脚本看到无意义的参数。
+      return mod.runMain({ argv: [], stdinText });
     },
   });
   return 0;

@@ -17,6 +17,9 @@
 //   | WebRTC | 抑制非代理 UDP(ADR-014) |
 //   | WebGL | **不加** `--enable-unsafe-swiftshader`(Playwright 无头时会自动加) |
 
+import path from "node:path";
+import os from "node:os";
+
 export const USAGE = `ouuut —— 自带 Chromium 的 agent 浏览器
 
 用法:
@@ -62,6 +65,16 @@ const DEFAULT_FEATURES_TO_DISABLE = [
 function num(v, fallback) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * 本次会话专用的临时档案目录。
+ *
+ * 带 pid 是为了**同一台机上多个会话互不干扰** —— 两个 agent 会话抢同一个
+ * user-data-dir 会造成同样的"交接后退出"。不写进仓库、不落在用户档案下。
+ */
+export function defaultUserDataDir(namespace = "ouuut", pid = process.pid) {
+  return path.join(os.tmpdir(), `${namespace}-session-${pid}`);
 }
 
 /**
@@ -176,7 +189,22 @@ export function buildBrowserArgs(opts = {}, env = {}) {
   ];
 
   if (opts.headless) args.push("--headless=new");
-  if (opts.userDataDir) args.push(`--user-data-dir=${opts.userDataDir}`);
+
+  // ---- 档案目录:**必须给**,否则会去贴使用者的真实 Chrome ----
+  //
+  // 实测(2026-10-25,真跑出来的):不传 `--user-data-dir` 时,我们编的 chrome.exe
+  // 会去用 `%LOCALAPPDATA%\Google\Chrome\User Data` —— 与**使用者正在运行的真实
+  // Chrome 是同一个**。于是新实例把命令行交接给已运行的实例、自己退出(code=0),
+  // 现象是 `listTabs` 报「ouuut 退出(code=0 signal=null)」。
+  //
+  // 所以默认给一个**本次会话专用的临时目录**:
+  //   * **不碰**使用者的真实档案 —— 比"不给"更安全,不是更不安全
+  //     (原先的注释写的是"不给就别编一个,免得动到真实档案" —— 理由写反了)
+  //   * 不会与已运行的 Chrome 撞车
+  //
+  // 显式传 `--user-data-dir` 时用传的(测试与后续的 `real` 档案导入都靠它)。
+  const userDataDir = opts.userDataDir || defaultUserDataDir(opts.namespace, opts.pid ?? process.pid);
+  args.push(`--user-data-dir=${userDataDir}`);
   if (opts.proxy) {
     args.push(`--proxy-server=${opts.proxy}`);
     args.push("--proxy-bypass-list=<-loopback>;localhost;127.0.0.1;*.ts.net");
