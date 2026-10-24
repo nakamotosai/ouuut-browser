@@ -237,12 +237,19 @@ else
 fi
 
 # ---- 5/7 构建 --------------------------------------------------------------
-log "5/7 autoninja(预计数小时)"
+log "5/7 autoninja(首次全量构建约数小时)"
+# 线程数可调:`OUUUT_JOBS=12 tools/20-rebase.sh`
+# (在内存/CPU 吃紧的机器上降线程是常见需求;默认交给 autoninja 自己决定)
+JOBS_ARG=()
+if [ -n "${OUUUT_JOBS:-}" ]; then
+  JOBS_ARG=(-j "$OUUUT_JOBS")
+  printf '  线程数:%s(来自 OUUUT_JOBS)\n' "$OUUUT_JOBS"
+fi
 if [ "$DRY_RUN" -eq 1 ]; then
-  printf '  [dry-run] %s -C %s chrome\n' "${AUTONINJA:-autoninja}" "$OUT_DIR"
+  printf '  [dry-run] %s -C %s %s chrome\n' "${AUTONINJA:-autoninja}" "$OUT_DIR" "${JOBS_ARG[*]}"
 else
   [ -n "$AUTONINJA" ] || die "autoninja 不可用"
-  "$AUTONINJA" -C "$OUT_DIR" chrome
+  "$AUTONINJA" -C "$OUT_DIR" "${JOBS_ARG[@]}" chrome
 fi
 
 # ---- 6/7 冒烟(**必须在写 UPSTREAM 之前**)---------------------------------
