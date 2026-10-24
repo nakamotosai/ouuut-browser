@@ -45,17 +45,31 @@ norm() { ( cd "$1" 2>/dev/null && pwd -P ); }
 #      导致 v8 被映射成不存在的 `github.com/v8.git`)
 #   - 作者/CI 拿到脚本就能复现,不需要先跑一遍「配置命令」
 #
-# ⚠️ `insteadOf` 用**最长前缀匹配**,所以针对性规则是安全的;
-#    **别**写 `.../ -> github.com/` 这种泛规则(会把 `chromium/src.git` 也改坏)。
-# ⚠️ `external/github.com/<org>/<repo>` **不一定**是 1:1 的 GitHub 仓库 ——
-#    有的指向**子目录**(如 `SeleniumHQ/selenium/py`、`llvm/llvm-project/clang/tools/clang-format`)。
-#    那些要靠 `.gclient` 的 `custom_deps` 跳过,否则一个 dep 失败会**整个 sync 退出**。
+# ⚠️ `insteadOf` 用**最长前缀匹配**,所以可以这样表达「排除」:
+#   给不适配的子树加一条**更长的恒等规则**(映射到自己),它就留在 googlesource 上。
+#
+# 为什么需要排除:`external/github.com/<org>/<repo>` **不一定是 1:1 的 GitHub 仓库** ——
+# 有的是把 GitHub 仓库的**子目录**单独在 googlesource 上做的**合成仓库**,
+# GitHub 上根本没有对应仓库。实测这两个子树属于此类:
+#   * `llvm/`        —— `llvm/llvm-project/clang/tools/clang-format` 等 7 个都是子目录
+#   * `SeleniumHQ/`  —— `selenium/py`
+# 把它们的源**改回去**(而不是把依赖丢掉),既保住了 libc++ / compiler-rt 这些可能有用的组件,
+# 也少维护一份跳过名单。
+#
+# v8 那条**只匹配整条 URL**:`v8/` 前缀下还有别的仓库(如 `v8/fuzzer_wasm_corpus`),
+# 用前缀规则会把它们一起改坏(实测踩过)。
 MIRROR_RULES=(
+  # 「重写」规则
   "https://github.com/|https://chromium.googlesource.com/external/github.com/"
   "https://github.com/webmproject/|https://chromium.googlesource.com/webm/"
-  # v8 这条**必须**带 org:仓库是 `v8/v8`,`.../v8/` 直接映射到 `github.com/`
-  # 会得到 `github.com/v8.git`(不存在)。实测踩过。
-  "https://github.com/v8/|https://chromium.googlesource.com/v8/"
+  "https://github.com/v8/v8.git|https://chromium.googlesource.com/v8/v8.git"
+  # 「排除」规则:更长前缀 + 映射到自己 = 留在 googlesource
+  "https://chromium.googlesource.com/external/github.com/llvm/|https://chromium.googlesource.com/external/github.com/llvm/"
+  "https://chromium.googlesource.com/external/github.com/SeleniumHQ/|https://chromium.googlesource.com/external/github.com/SeleniumHQ/"
+  # 精确到整条 URL:googlesource 上的合成仓库名是 `google/cld_3`,而 GitHub 上是
+  # `google/cld3`(无下划线)—— 前缀重写必然 404。注意**不能**排除整个 `google/`:
+  # 同子树下的 `google/pthreadpool` 在 GitHub 上是真实存在的。
+  "https://chromium.googlesource.com/external/github.com/google/cld_3.git|https://chromium.googlesource.com/external/github.com/google/cld_3.git"
 )
 
 export_git_mirror_env() {
@@ -113,16 +127,30 @@ find_python() {
 }
 
 generate_skip_list() {
+  # ⚠️ 本函数的 **stdout 会被调用方用 $(...) 捕获**并直接嵌进 .gclient。
+  # 所以**任何进度输出都必须走 stderr** —— 否则会被当成 Python 源码写进文件
+  # (实测踩过:一句 ANSI 彩色的 log 混进去,.gclient 直接语法错误)。
   local py
   py="$(find_python)" || {
     warn "找不到 python —— 跳过依赖预检。
   若 gclient sync 因某个 dep 失败,手工跑一次:
       <python> tools/preflight-deps-mirror.py
-  把输出粘进 ${GCLIENT_FILE} 的 custom_deps。"
+  把输出粘进 ${GCLIENT_FILE} 的 custom_deps。" >&2
     return 0
   }
-  log "  用 ${py} 预检 DEPS(可能需要几分钟)"
-  "$py" "${ROOT_POSIX}/tools/preflight-deps-mirror.py" --emit-skips 2>/dev/null || true
+  printf '  用 %s 预检 DEPS(可能需要几分钟)\n' "$py" >&2
+  {
+    # 自动发现:顶层 DEPS 里镜像不可达的依赖。
+    #
+    # 说明:原来这里还有一条**人工**跳过 `src/third_party/webpagereplay` ——
+    # 它的嵌套 DEPS 拉 llvm 子目录而失败。后来改用「**更长前缀的恒等规则**」
+    # 把 `external/github.com/llvm/` 与 `SeleniumHQ/` 排除出镜像重写,
+    # 让那些依赖从**它们真正存在的地方**(googlesource 的合成仓库)拉 ——
+    # 于是这条人工跳过不再需要了。
+    # **能修源就别丢依赖**:修源保住组件、少一份要维护的名单。
+    # 去掉 CR:Windows 上 python 输出是 \r\n,CR 混进 .gclient 虽不致命但不干净
+    "$py" "${ROOT_POSIX}/tools/preflight-deps-mirror.py" --emit-skips 2>/dev/null | tr -d '\r' || true
+  }
 }
 
 for d in "/f/depot_tools" "F:/depot_tools" "/c/depot_tools" "C:/depot_tools" "$HOME/depot_tools"; do
