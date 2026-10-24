@@ -75,11 +75,11 @@ def load_deps() -> dict[str, str]:
         "Str": lambda s: s if isinstance(s, str) else str(s),
     }
     try:
-        exec(compile(src, str(DEPS_FILE), "exec"), ns)  # noqa: S102
+        exec(compile(src, str(DEPS_FILE), "exec"), ns)
     except Exception as exc:  # pragma: no cover
         print(f"[fatal] 解析 DEPS 失败: {type(exc).__name__}: {exc}", file=sys.stderr)
         print("        DEPS 的语法可能变了 —— 改用正则兜底或更新本工具。", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from exc
     return ns.get("deps", {})
 
 
