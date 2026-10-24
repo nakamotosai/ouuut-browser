@@ -232,5 +232,102 @@
     "skills/ego-browser/scripts/install.sh": "0dcfb371dc37c61fb61cf31747d9c97f72f5b071147815857734d2096db9d2a3",
     "skills/ego-browser/SKILL.md": "ae3ebd9a80c882793e7e6a52821a1ca093fdfa792460d5f62cd8d35c5f39df89",
     "spec/agent-skills-spec.md": "ff22f2be775f4b757c9a7a2df0421de4c94021d34d9382cea5dd567ff0cdad2c"
+  },
+  "local_modifications": {
+    "note": "本副本的本地改动。**files 记录的仍是上游原件的 sha256**(所以「哪些文件被动过」永远可算);这里逐条登记「动了什么、为什么」。",
+    "recorded_at_utc": "2026-10-24T13:34:48+00:00",
+    "changes": [
+      {
+        "id": "ouuut-namespace-rename",
+        "reason": "命名空间改名 globalThis.ego → globalThis.ouuut,以免与装了 ego lite 的机器冲突(见 docs/原生层接口.md §一)。同时把 InstallTarget 的字段与 eval 脚本文本里的裸标识符一并改掉。",
+        "verification": "同目录 node --test \"src/**/*.test.mjs\":改名前后**失败集合逐条相同**(基线 532 测试 / 526 过 / 6 挂,6 条均与本改名无关)。",
+        "files": [
+          {
+            "path": "package/ego-browser/src/browser-runtime.test.mjs",
+            "upstream_sha256": "e6a1636ed0913e3bab9b4a6897f340aaf66c5622159de3527d8a089f7191d049",
+            "local_sha256": "51b297ca4cd986353c514bd07945970da9cf0bb642dc9f90b682e4512a49aea5"
+          },
+          {
+            "path": "package/ego-browser/src/browser-runtime.ts",
+            "upstream_sha256": "7945f1f4639c865f1ab11a38d2cd9ec8ca31706ef6f2db24cacc4d5304129e44",
+            "local_sha256": "214e9365bd81fae047c3c03537a6b60cba24498221e0b029e7492758d107916a"
+          },
+          {
+            "path": "package/ego-browser/src/driver/keyboard.test.mjs",
+            "upstream_sha256": "a374980b1221a7a4d4646b1d55ba535e4c617e553ef1ca7838bfaa4b496302a3",
+            "local_sha256": "133edc921da777490a00c911b8aef39bc1c477fdcec618407be91b8a21a9280b"
+          },
+          {
+            "path": "package/ego-browser/src/driver/keyboard.ts",
+            "upstream_sha256": "57975553afac9dbbf172ff834b4bf05d8e839ddca36688339dcf73c4d4119a42",
+            "local_sha256": "7870dcdf4f955c12c6a0655bb6036c5a5985398d76b18a0b3a74d5a2337104a0"
+          },
+          {
+            "path": "package/ego-browser/src/driver/nav.test.mjs",
+            "upstream_sha256": "e0bb762cc49e13474c4420b534360cfbfc2bb40b267e4062c23e1c17f287cc89",
+            "local_sha256": "7f2c5ae120a890a0ecf92b7a7d41f8370559cd96c9de6f1931d8d5c3bfa514f4"
+          },
+          {
+            "path": "package/ego-browser/src/driver/observe.test.mjs",
+            "upstream_sha256": "c21563afe565ca6661e8be2178fee7d62d8668321ef413bd05695aac368c515d",
+            "local_sha256": "7b5733310d5f02f11e3c5d07c3575846aec39be42e1578ccafc5daa3f84f590a"
+          },
+          {
+            "path": "package/ego-browser/src/driver/pointer.test.mjs",
+            "upstream_sha256": "4a00a10e675869eedcd684ee3c36913b6c442839d18a7c6315ae8640e817c11d",
+            "local_sha256": "f84bfafd10e73b8e7305c4fa38086f4ca951b782365511e571de3a374c7c3ea0"
+          },
+          {
+            "path": "package/ego-browser/src/driver/pointer.ts",
+            "upstream_sha256": "ad55ec63c7c986bc18e3c2ade24dfc2d7861bfa9f22558445fbc121a7c283c3c",
+            "local_sha256": "d400456729a8f0fa952aa25a682c83c986fbbe488516d8c63760e8c8431a9c7e"
+          },
+          {
+            "path": "package/ego-browser/src/driver/waits.test.mjs",
+            "upstream_sha256": "62198ecbaccef5c835bfd144c778ab246ac67b48f5bf215bbfbe224cef4b0983",
+            "local_sha256": "1b0ba2e86555037ba951d0248e9cd58252535d622cb393ddf35ff8a49faee10c"
+          },
+          {
+            "path": "package/ego-browser/src/helpers.test.mjs",
+            "upstream_sha256": "470c2914f5918402fa0b1c6686b68e50d10fff611a0a2ea4923bd3ca1bb63300",
+            "local_sha256": "77de2f2d5790573145f199ba69feafb10d8b265222bd09150d429b5fb7c3d146"
+          },
+          {
+            "path": "package/ego-browser/src/helpers.ts",
+            "upstream_sha256": "45de52ef7032e7679b0fed203187e11a056cabb3f94f9fe9ba419326e26f8eab",
+            "local_sha256": "55c734ae0c6317730d266bec032d4ff3b079d48ef8834571fbc2c3f70411f2a8"
+          },
+          {
+            "path": "package/ego-browser/src/index.ts",
+            "upstream_sha256": "0ba97337899adb013dbfffec0c5054a35f96c324e6c5022444b153b070d82690",
+            "local_sha256": "c6f38529fb2618136e052be02bdc6eec99516edfeda44aff61baf38182a2a6a9"
+          },
+          {
+            "path": "package/ego-browser/src/run-output-sink.test.mjs",
+            "upstream_sha256": "6d8dbbc7e10a081a822718975af8c33488170577a3e6d9137e7f0c03898b089e",
+            "local_sha256": "f675c45e0a7631f03dae01564f8e3abdcb798889ca7474931c019e112ad8b6d1"
+          },
+          {
+            "path": "package/ego-browser/src/sdk-lifecycle.test.mjs",
+            "upstream_sha256": "4a773f951b56a9c0f5de3d315279c822a6bfc72f8b04f5c72287d27b258056ae",
+            "local_sha256": "41dbd45183a4de43d67cfb24187787a7c974d21240b78b0d8dfeb133cb4a5712"
+          },
+          {
+            "path": "package/ego-browser/src/taskspace-e2e.test.mjs",
+            "upstream_sha256": "403cb80bf6d8d53c4344ed850c7a67c0d10c3a208350849b0228655b5a35a052",
+            "local_sha256": "a7b392d0a227172f90a4fc9a3f1b5532f7d8e28239f1e42bf1a0ef1b342ae7ce"
+          },
+          {
+            "path": "package/ego-browser/src/update-notice.test.mjs",
+            "upstream_sha256": "582762e21af095aaac765d4876d448d19cea22ee9273cb9d788ff6673c5808b2",
+            "local_sha256": "a16ac5a310fbf8449006ad002a3dcfe8d92442038910fe2d124248f10b8f313f"
+          }
+        ]
+      }
+    ],
+    "generated_not_in_files": {
+      "node_modules/": "npm ci --ignore-scripts 的产物(根 .gitignore 已忽略)。注意:上游的 `prepare` 脚本会跑 `lefthook install`,而 lefthook.yml 属于 excluded_top_level,所以必须 --ignore-scripts。",
+      "dist/": "npm run build 的产物(根 .gitignore 已忽略);31/36 个测试 import 的是它,不是 src/。"
+    }
   }
 }

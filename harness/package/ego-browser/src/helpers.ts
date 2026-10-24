@@ -83,7 +83,7 @@ export { browserFetch, serverFetch } from "./http.js";
  * @returns {Promise<Array<{taskId:string,id:number,name:string,createdBy?:string,ownership?:string,profileId?:string,profileName?:string,recentTabTitles?:string[]}>>}
  */
 export async function listTaskSpaces() {
-  const ego = globalThis.ego;
+  const ego = globalThis.ouuut;
   if (!ego || typeof ego.listTaskSpaces !== "function") {
     throw new Error("listTaskSpaces requires ego.listTaskSpaces");
   }
@@ -98,7 +98,7 @@ export async function listTaskSpaces() {
  * @returns {Promise<Array<{id:string,name:string,isDefault:boolean}>>}
  */
 export async function profiles() {
-  const ego = globalThis.ego;
+  const ego = globalThis.ouuut;
   if (!ego || typeof ego.listProfiles !== "function") {
     throw new Error("profiles requires ego.listProfiles");
   }
@@ -157,7 +157,7 @@ function isAgentOwned(ownership) {
  * @returns {Promise<{taskId:string,id:number,name:string,createdBy?:string,ownership?:string,recentTabTitles?:string[]}>}
  */
 export async function switchTaskSpace(nameOrId) {
-  const ego = globalThis.ego;
+  const ego = globalThis.ouuut;
   if (!ego || typeof ego.useTaskSpace !== "function") {
     throw new Error("switchTaskSpace requires ego.useTaskSpace");
   }
@@ -186,7 +186,7 @@ async function createTaskSpaceResolution(
   profileId?: string,
   options: { select?: boolean } = {},
 ) {
-  const ego = globalThis.ego;
+  const ego = globalThis.ouuut;
   if (!ego || typeof ego.createTaskSpace !== "function") {
     throw new Error("newTaskSpace requires ego.createTaskSpace");
   }
@@ -254,7 +254,7 @@ async function resolveTaskSpace(
         options.select === false
           ? existing
           : await selectTaskSpace(
-              globalThis.ego,
+              globalThis.ouuut,
               existing,
               "useOrCreateTaskSpace",
             ),
@@ -286,7 +286,7 @@ async function resolveTaskSpace(
         options.select === false
           ? existing
           : await selectTaskSpace(
-              globalThis.ego,
+              globalThis.ouuut,
               existing,
               "useOrCreateTaskSpace",
             ),
@@ -368,7 +368,7 @@ export async function claimTaskSpace(nameOrId) {
 }
 
 async function claimResolvedTaskSpace(space, op = "claimTaskSpace") {
-  const ego = globalThis.ego;
+  const ego = globalThis.ouuut;
   if (!ego || typeof ego.claimTaskSpace !== "function") {
     throw new Error(`${op} requires ego.claimTaskSpace`);
   }
@@ -425,7 +425,7 @@ export async function completeTaskSpace(
   if (!options || typeof options.keep !== "boolean") {
     throw new Error("completeTaskSpace requires { keep: boolean }");
   }
-  const ego = globalThis.ego;
+  const ego = globalThis.ouuut;
   if (!ego) {
     throw new Error("completeTaskSpace requires ego runtime");
   }
@@ -465,7 +465,7 @@ export async function completeTaskSpace(
  * @returns {Promise<{done: boolean, skipped?: "user-owned"}>} `{ done: true }` when control was handed off; `{ done: false, skipped: "user-owned" }` when nothing was done.
  */
 export async function handOffTaskSpace(nameOrId?: string | number) {
-  const ego = globalThis.ego;
+  const ego = globalThis.ouuut;
   if (!ego || typeof ego.handOffTaskSpace !== "function") {
     throw new Error("handOffTaskSpace requires ego.handOffTaskSpace");
   }
@@ -486,7 +486,7 @@ export async function handOffTaskSpace(nameOrId?: string | number) {
  * @returns {Promise<import('./page-model.js').TaskSpace|void>} A TaskSpace when a name or id is provided; otherwise preserves the selected-space form's void result.
  */
 export async function takeOverTaskSpace(nameOrId?: string | number) {
-  const ego = globalThis.ego;
+  const ego = globalThis.ouuut;
   if (!ego || typeof ego.takeOverTaskSpace !== "function") {
     throw new Error("takeOverTaskSpace requires ego.takeOverTaskSpace");
   }
@@ -518,7 +518,7 @@ export async function takeOverTaskSpace(nameOrId?: string | number) {
  * of busy-looping until timeout.
  */
 async function probeCurrentAgentControl() {
-  const ego = globalThis.ego;
+  const ego = globalThis.ouuut;
   if (!ego || typeof ego.snapshot !== "function") return false;
   return probeAgentControl(() => ego.snapshot({ maxResultLength: 1 }));
 }
@@ -541,7 +541,7 @@ export async function waitForAgentControl(
   ) {
     throw new Error("waitForAgentControl requires a task space name or id");
   }
-  const ego = globalThis.ego;
+  const ego = globalThis.ouuut;
   if (!ego) {
     throw new Error("waitForAgentControl requires ego runtime");
   }

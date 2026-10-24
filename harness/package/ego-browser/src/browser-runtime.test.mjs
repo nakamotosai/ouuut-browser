@@ -18,8 +18,8 @@ import {
 } from "../dist/src/browser-runtime.js";
 
 test("browserCdp exposes a typed transport timeout", async () => {
-  const previous = globalThis.ego;
-  globalThis.ego = { sendCDPMessage() {} };
+  const previous = globalThis.ouuut;
+  globalThis.ouuut = { sendCDPMessage() {} };
   try {
     await assert.rejects(
       () => browserCdp("Browser.getVersion", {}, undefined, 5),
@@ -37,13 +37,13 @@ test("browserCdp exposes a typed transport timeout", async () => {
     );
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("frame sessions follow one Page target and are invalidated with it", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const attachCounts = new Map();
   const runtime = {
     sendCDPMessage(payload) {
@@ -102,7 +102,7 @@ test("frame sessions follow one Page target and are invalidated with it", async 
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const first = await ensureFrameSessions("page-main");
@@ -134,13 +134,13 @@ test("frame sessions follow one Page target and are invalidated with it", async 
     assert.equal(attachCounts.get("frame-grandchild"), 2);
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("frame session discovery drops an enumerated iframe that disappears before attach", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   let discoveries = 0;
   let staleAttachAttempts = 0;
   const runtime = {
@@ -194,7 +194,7 @@ test("frame session discovery drops an enumerated iframe that disappears before 
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     invalidateSession();
@@ -208,13 +208,13 @@ test("frame session discovery drops an enumerated iframe that disappears before 
     assert.equal(staleAttachAttempts, 1);
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("frame session discovery fails fast when the page target is gone", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   let attachAttempts = 0;
   const runtime = {
     sendCDPMessage(payload) {
@@ -235,7 +235,7 @@ test("frame session discovery fails fast when the page target is gone", async ()
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     invalidateSession();
@@ -246,13 +246,13 @@ test("frame session discovery fails fast when the page target is gone", async ()
     assert.equal(attachAttempts, 1);
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("frame session discovery fails fast when the page session is lost", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   let frameTreeAttempts = 0;
   const runtime = {
     sendCDPMessage(payload) {
@@ -277,7 +277,7 @@ test("frame session discovery fails fast when the page session is lost", async (
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     invalidateSession();
@@ -288,13 +288,13 @@ test("frame session discovery fails fast when the page session is lost", async (
     assert.equal(frameTreeAttempts, 1);
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("network tracking is continuous and does not consume Page events", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const methods = [];
   const runtime = {
     sendCDPMessage(payload) {
@@ -309,7 +309,7 @@ test("network tracking is continuous and does not consume Page events", async ()
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const sessionId = await ensureSession("page-main");
@@ -453,13 +453,13 @@ test("network tracking is continuous and does not consume Page events", async ()
     );
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("Page network sessions include only its known OOPIF descendants", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const runtime = {
     sendCDPMessage(payload) {
       const request = JSON.parse(payload);
@@ -495,7 +495,7 @@ test("Page network sessions include only its known OOPIF descendants", async () 
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const mainSessionId = await ensureSession("page-main");
@@ -505,13 +505,13 @@ test("Page network sessions include only its known OOPIF descendants", async () 
     ]);
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("a live auto-attached OOPIF survives a temporarily incomplete frame tree", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const runtime = {
     sendCDPMessage(payload) {
       const request = JSON.parse(payload);
@@ -539,7 +539,7 @@ test("a live auto-attached OOPIF survives a temporarily incomplete frame tree", 
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const mainSessionId = await ensureSession("page-main");
@@ -566,13 +566,13 @@ test("a live auto-attached OOPIF survives a temporarily incomplete frame tree", 
     ]);
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("Page network session discovery honors its transport timeout", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const runtime = {
     sendCDPMessage(payload) {
       const request = JSON.parse(payload);
@@ -586,7 +586,7 @@ test("Page network session discovery honors its transport timeout", async () => 
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const mainSessionId = await ensureSession("page-main");
@@ -601,13 +601,13 @@ test("Page network session discovery honors its transport timeout", async () => 
     );
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("a shorter network-tracking waiter does not cancel shared initialization", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   let delayedNetworkEnable;
   const methods = [];
   const runtime = {
@@ -652,7 +652,7 @@ test("a shorter network-tracking waiter does not cancel shared initialization", 
       queueMicrotask(respond);
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const mainSessionId = await ensureSession("page-main");
@@ -719,13 +719,13 @@ test("a shorter network-tracking waiter does not cancel shared initialization", 
     );
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("a shorter session waiter does not cancel shared auto-attach initialization", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const methods = [];
   const runtime = {
     sendCDPMessage(payload) {
@@ -768,7 +768,7 @@ test("a shorter session waiter does not cancel shared auto-attach initialization
       queueMicrotask(respond);
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const mainSessionId = await ensureSession("page-main");
@@ -828,13 +828,13 @@ test("a shorter session waiter does not cancel shared auto-attach initialization
     );
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("an OOPIF document request can finish in its child session", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const runtime = {
     sendCDPMessage(payload) {
       const request = JSON.parse(payload);
@@ -871,7 +871,7 @@ test("an OOPIF document request can finish in its child session", async () => {
       runtime.onCDPMessage(JSON.stringify({ sessionId, method, params }));
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const mainSession = await ensureSession("page-main");
@@ -925,13 +925,13 @@ test("an OOPIF document request can finish in its child session", async () => {
     );
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("auto-attached OOPIFs are instrumented and resumed without waiting for Network.enable", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const sent = [];
   let delayedChildNetworkEnable;
   const runtime = {
@@ -996,7 +996,7 @@ test("auto-attached OOPIFs are instrumented and resumed without waiting for Netw
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     await ensureSession("page-main");
@@ -1050,13 +1050,13 @@ test("auto-attached OOPIFs are instrumented and resumed without waiting for Netw
     );
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("dedicated workers are auto-attached and resumed immediately", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const sent = [];
   const runtime = {
     sendCDPMessage(payload) {
@@ -1071,7 +1071,7 @@ test("dedicated workers are auto-attached and resumed immediately", async () => 
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const mainSessionId = await ensureSession("page-main");
@@ -1122,8 +1122,8 @@ test("dedicated workers are auto-attached and resumed immediately", async () => 
     );
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
@@ -1132,7 +1132,7 @@ test("dedicated workers are auto-attached and resumed immediately", async () => 
 // surface the ego-browser-owned wording for the code (not the native error
 // message) and carry error_code, instead of throwing the bare native error message.
 test("browserCdp surfaces the owned message and error_code when ensureSession is blocked", async () => {
-  globalThis.ego = {
+  globalThis.ouuut = {
     async listTabs() {
       return {
         error: "Task space 10 is not assigned to an agent.",
@@ -1152,7 +1152,7 @@ test("browserCdp surfaces the owned message and error_code when ensureSession is
       },
     );
   } finally {
-    delete globalThis.ego;
+    delete globalThis.ouuut;
   }
 });
 
@@ -1161,11 +1161,11 @@ test("browserCdp surfaces the owned message and error_code when ensureSession is
 // would hang until the 15s timeout; wired, it rejects immediately with the
 // owned message and error_code.
 test("browserCdp rejects the in-flight request via onSendCDPMessageError", async () => {
-  globalThis.ego = {
+  globalThis.ouuut = {
     sendCDPMessage() {
       // The binding delivers the failure asynchronously through the event loop.
       queueMicrotask(() =>
-        globalThis.ego.onSendCDPMessageError(
+        globalThis.ouuut.onSendCDPMessageError(
           "native reconstructed text",
           "EGO_TASK_SPACE_INACTIVE",
         ),
@@ -1185,12 +1185,12 @@ test("browserCdp rejects the in-flight request via onSendCDPMessageError", async
       },
     );
   } finally {
-    delete globalThis.ego;
+    delete globalThis.ouuut;
   }
 });
 
 test("a non-user-control CDP failure does not run the permission probe", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   let probes = 0;
   const runtime = {
     async setAgentTaskState() {
@@ -1206,7 +1206,7 @@ test("a non-user-control CDP failure does not run the permission probe", async (
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     await assert.rejects(
@@ -1220,13 +1220,13 @@ test("a non-user-control CDP failure does not run the permission probe", async (
     assert.equal(probes, 0);
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("a user-control CDP failure probes the native permission reason before rejecting", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   let probes = 0;
   const runtime = {
     async setAgentTaskState() {
@@ -1245,7 +1245,7 @@ test("a user-control CDP failure probes the native permission reason before reje
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     await assert.rejects(
@@ -1259,13 +1259,13 @@ test("a user-control CDP failure probes the native permission reason before reje
     assert.equal(probes, 1);
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("concurrent user-control CDP failures share one permission probe", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   let probes = 0;
   let finishProbe;
   const runtime = {
@@ -1284,7 +1284,7 @@ test("concurrent user-control CDP failures share one permission probe", async ()
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const requests = [
@@ -1307,13 +1307,13 @@ test("concurrent user-control CDP failures share one permission probe", async ()
     }
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("a failed permission probe falls back to generic user-control guidance", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const runtime = {
     async setAgentTaskState() {
       throw new Error("probe transport failed");
@@ -1327,7 +1327,7 @@ test("a failed permission probe falls back to generic user-control guidance", as
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     await assert.rejects(
@@ -1343,13 +1343,13 @@ test("a failed permission probe falls back to generic user-control guidance", as
     );
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("a recovered probe allows a later takeover to be detected", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   let probes = 0;
   const runtime = {
     async setAgentTaskState() {
@@ -1369,7 +1369,7 @@ test("a recovered probe allows a later takeover to be detected", async () => {
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     await assert.rejects(
@@ -1383,13 +1383,13 @@ test("a recovered probe allows a later takeover to be detected", async () => {
     assert.equal(probes, 2);
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("CDP events are drained only by the target session that received them", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   let nextSession = 1;
   const runtime = {
     sendCDPMessage(payload) {
@@ -1406,7 +1406,7 @@ test("CDP events are drained only by the target session that received them", asy
       runtime.onCDPMessage(JSON.stringify({ sessionId, method, params }));
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const attachedA = await browserCdp("Target.attachToTarget", {
@@ -1436,15 +1436,15 @@ test("CDP events are drained only by the target session that received them", asy
     );
   } finally {
     if (previous === undefined) {
-      delete globalThis.ego;
+      delete globalThis.ouuut;
     } else {
-      globalThis.ego = previous;
+      globalThis.ouuut = previous;
     }
   }
 });
 
 test("a JavaScript dialog interrupts the blocked Page input command", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   let sessionId;
   let pendingDisableRequestId;
   const runtime = {
@@ -1495,7 +1495,7 @@ test("a JavaScript dialog interrupts the blocked Page input command", async () =
       }
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const attached = await browserCdp("Target.attachToTarget", {
@@ -1557,15 +1557,15 @@ test("a JavaScript dialog interrupts the blocked Page input command", async () =
   } finally {
     invalidateSession();
     if (previous === undefined) {
-      delete globalThis.ego;
+      delete globalThis.ouuut;
     } else {
-      globalThis.ego = previous;
+      globalThis.ouuut = previous;
     }
   }
 });
 
 function withDialogRuntime(fn, { hold = [] } = {}) {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const sent = [];
   const runtime = {
     sendCDPMessage(payload) {
@@ -1585,14 +1585,14 @@ function withDialogRuntime(fn, { hold = [] } = {}) {
       runtime.onCDPMessage(JSON.stringify({ sessionId, method, params }));
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
   invalidateSession();
   return Promise.resolve()
     .then(() => fn({ runtime, sent }))
     .finally(() => {
       invalidateSession();
-      if (previous === undefined) delete globalThis.ego;
-      else globalThis.ego = previous;
+      if (previous === undefined) delete globalThis.ouuut;
+      else globalThis.ouuut = previous;
     });
 }
 
@@ -1766,7 +1766,7 @@ test("a raw command stalled by a known dialog reports it instead of a bare timeo
 });
 
 test("page event drains exclude unscoped browser events", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const runtime = {
     sendCDPMessage(payload) {
       const request = JSON.parse(payload);
@@ -1782,7 +1782,7 @@ test("page event drains exclude unscoped browser events", async () => {
       runtime.onCDPMessage(JSON.stringify(event));
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const attached = await browserCdp("Target.attachToTarget", {
@@ -1807,13 +1807,13 @@ test("page event drains exclude unscoped browser events", async () => {
       "legacy drain still exposes unscoped browser events",
     );
   } finally {
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("browser event subscribers are isolated and can unsubscribe", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const originalConsoleError = console.error;
   const received = [];
   const reported = [];
@@ -1828,7 +1828,7 @@ test("browser event subscribers are isolated and can unsubscribe", async () => {
       runtime.onCDPMessage(JSON.stringify(event));
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
   console.error = (...args) => reported.push(args);
 
   const unsubscribeThrowing = subscribeBrowserEvents(() => {
@@ -1856,13 +1856,13 @@ test("browser event subscribers are isolated and can unsubscribe", async () => {
     unsubscribe();
     unsubscribeThrowing();
     console.error = originalConsoleError;
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("page event subscribers receive only events from their target", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const received = [];
   const runtime = {
     sendCDPMessage(payload) {
@@ -1879,7 +1879,7 @@ test("page event subscribers receive only events from their target", async () =>
       runtime.onCDPMessage(JSON.stringify(event));
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   const unsubscribe = subscribePageEvents("target-a", (event) =>
     received.push(event),
@@ -1911,13 +1911,13 @@ test("page event subscribers receive only events from their target", async () =>
   } finally {
     unsubscribe();
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("a native CDP callback contains internal handler failures", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const originalConsoleError = console.error;
   const reported = [];
   const runtime = {
@@ -1932,7 +1932,7 @@ test("a native CDP callback contains internal handler failures", async () => {
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
   console.error = (...args) => reported.push(args);
   let interception;
 
@@ -1974,13 +1974,13 @@ test("a native CDP callback contains internal handler failures", async () => {
     console.error = originalConsoleError;
     await interception?.dispose();
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("runtime callbacks can be released without deleting a foreign replacement", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const runtimeModule = await import("../dist/src/browser-runtime.js");
   const runtime = {
     sendCDPMessage(payload) {
@@ -1992,7 +1992,7 @@ test("runtime callbacks can be released without deleting a foreign replacement",
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     assert.equal(
@@ -2018,13 +2018,13 @@ test("runtime callbacks can be released without deleting a foreign replacement",
     assert.equal(runtime.onSendCDPMessageError, foreignError);
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("file chooser interception suppresses the native picker and returns its input", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const calls = [];
   const runtime = {
     sendCDPMessage(payload) {
@@ -2042,7 +2042,7 @@ test("file chooser interception suppresses the native picker and returns its inp
       runtime.onCDPMessage(JSON.stringify(event));
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     const attached = await browserCdp("Target.attachToTarget", {
@@ -2092,7 +2092,7 @@ test("file chooser interception suppresses the native picker and returns its inp
       ),
     );
   } finally {
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });

@@ -168,8 +168,8 @@ test("pressKey maps Backspace and Delete to editing commands", async () => {
 });
 
 test("pressKey does not synthesize a successful paste when native input is absent", async () => {
-  const originalEgo = globalThis.ego;
-  globalThis.ego = { sendCDPMessage: () => {} };
+  const originalEgo = globalThis.ouuut;
+  globalThis.ouuut = { sendCDPMessage: () => {} };
   let evaluateCallCount = 0;
   const restore = setOverrides({
     platform: "darwin",
@@ -191,15 +191,15 @@ test("pressKey does not synthesize a successful paste when native input is absen
     );
   } finally {
     restore();
-    if (originalEgo === undefined) delete globalThis.ego;
-    else globalThis.ego = originalEgo;
+    if (originalEgo === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = originalEgo;
   }
 });
 
 test("pressKey triggers probe fallback when CDP dispatch is not trusted", async () => {
   // Enable canProbeInputFallback() by providing ego runtime
-  const originalEgo = globalThis.ego;
-  globalThis.ego = { sendCDPMessage: () => {} };
+  const originalEgo = globalThis.ouuut;
+  globalThis.ouuut = { sendCDPMessage: () => {} };
   let evaluateCallCount = 0;
   const evaluateExpressions = [];
   const restore = setOverrides({
@@ -223,8 +223,8 @@ test("pressKey triggers probe fallback when CDP dispatch is not trusted", async 
     await pressKey("a");
   } finally {
     restore();
-    if (originalEgo === undefined) delete globalThis.ego;
-    else globalThis.ego = originalEgo;
+    if (originalEgo === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = originalEgo;
   }
 
   // Verify probe install and finish were called
@@ -253,8 +253,8 @@ test("pressKey triggers probe fallback when CDP dispatch is not trusted", async 
 });
 
 test("pressKey skips probe fallback when CDP dispatch is trusted", async () => {
-  const originalEgo = globalThis.ego;
-  globalThis.ego = { sendCDPMessage: () => {} };
+  const originalEgo = globalThis.ouuut;
+  globalThis.ouuut = { sendCDPMessage: () => {} };
   let evaluateCallCount = 0;
   const evaluateExpressions = [];
   const restore = setOverrides({
@@ -275,8 +275,8 @@ test("pressKey skips probe fallback when CDP dispatch is trusted", async () => {
     await pressKey("x");
   } finally {
     restore();
-    if (originalEgo === undefined) delete globalThis.ego;
-    else globalThis.ego = originalEgo;
+    if (originalEgo === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = originalEgo;
   }
 
   assert.equal(

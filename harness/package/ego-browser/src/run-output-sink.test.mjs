@@ -53,11 +53,11 @@ function captureStream() {
 }
 
 async function runScript(code, ego) {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   if (ego === undefined) {
-    delete globalThis.ego;
+    delete globalThis.ouuut;
   } else {
-    globalThis.ego = ego;
+    globalThis.ouuut = ego;
   }
   const stdout = captureStream();
   const stderr = captureStream();
@@ -74,9 +74,9 @@ async function runScript(code, ego) {
     error = err;
   } finally {
     if (previous === undefined) {
-      delete globalThis.ego;
+      delete globalThis.ouuut;
     } else {
-      globalThis.ego = previous;
+      globalThis.ouuut = previous;
     }
   }
   return { exitCode, error, stdout: stdout.text(), stderr: stderr.text() };

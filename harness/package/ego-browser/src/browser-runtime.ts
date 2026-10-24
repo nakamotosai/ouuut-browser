@@ -348,15 +348,15 @@ function capEvents(events) {
 
 export function isBrowserRuntime() {
   return Boolean(
-    globalThis.ego && typeof globalThis.ego.sendCDPMessage === "function",
+    globalThis.ouuut && typeof globalThis.ouuut.sendCDPMessage === "function",
   );
 }
 
 export function browserEgo() {
-  if (!globalThis.ego) {
+  if (!globalThis.ouuut) {
     throw new Error("browser runtime is not available");
   }
-  return globalThis.ego;
+  return globalThis.ouuut;
 }
 
 /** Keep exceptions from crossing the native-to-JavaScript callback boundary. */

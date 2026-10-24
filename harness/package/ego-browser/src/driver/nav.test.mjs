@@ -15,21 +15,21 @@ import {
 import { setOverrides, state } from "../../dist/src/state.js";
 
 function withEgo(ego, fn) {
-  const previous = globalThis.ego;
-  globalThis.ego = ego;
+  const previous = globalThis.ouuut;
+  globalThis.ouuut = ego;
   return Promise.resolve()
     .then(fn)
     .finally(() => {
       if (previous === undefined) {
-        delete globalThis.ego;
+        delete globalThis.ouuut;
       } else {
-        globalThis.ego = previous;
+        globalThis.ouuut = previous;
       }
     });
 }
 
 function withCdpRuntime(fn) {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const sent = [];
   const runtime = {
     async listTabs() {
@@ -76,16 +76,16 @@ function withCdpRuntime(fn) {
       );
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
   invalidateSession();
   return Promise.resolve()
     .then(() => fn({ runtime, sent }))
     .finally(() => {
       invalidateSession();
       if (previous === undefined) {
-        delete globalThis.ego;
+        delete globalThis.ouuut;
       } else {
-        globalThis.ego = previous;
+        globalThis.ouuut = previous;
       }
     });
 }

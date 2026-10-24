@@ -56,7 +56,7 @@ test("version probing stays silent when unsupported, failed, or stalled", async 
 
 test("SDK startup appends one update notice on a clean run", () => {
   const result = runSdk(`
-    globalThis.ego = {
+    globalThis.ouuut = {
       async getBrowserVersion() {
         return { currentVersion: "0.5.0.5", updateAvailable: true };
       },
@@ -72,7 +72,7 @@ test("SDK startup appends one update notice on a clean run", () => {
 
 test("a hard stop discards a queued update notice", () => {
   const result = runSdk(`
-    globalThis.ego = {
+    globalThis.ouuut = {
       async getBrowserVersion() {
         return { currentVersion: "0.5.0.5", updateAvailable: true };
       },

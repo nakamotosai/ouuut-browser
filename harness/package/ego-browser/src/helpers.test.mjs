@@ -34,15 +34,15 @@ test.after(async () => {
 });
 
 function withEgo(ego, fn) {
-  const previous = globalThis.ego;
-  globalThis.ego = ego;
+  const previous = globalThis.ouuut;
+  globalThis.ouuut = ego;
   return Promise.resolve()
     .then(fn)
     .finally(() => {
       if (previous === undefined) {
-        delete globalThis.ego;
+        delete globalThis.ouuut;
       } else {
-        globalThis.ego = previous;
+        globalThis.ouuut = previous;
       }
     });
 }

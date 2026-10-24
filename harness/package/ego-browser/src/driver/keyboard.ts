@@ -556,7 +556,7 @@ async function finishKeyProbe(
 }
 
 function canProbeInputFallback() {
-  return Boolean((globalThis as any).ego?.sendCDPMessage);
+  return Boolean((globalThis as any).ouuut?.sendCDPMessage);
 }
 
 function isKeyDispatchTimeout(error: unknown) {

@@ -30,7 +30,7 @@ type EgoRuntime = Record<string, unknown> & {
   onSendCDPMessageError?: (message: unknown, errorCode?: string) => void;
 };
 type InstallTarget = Record<string, unknown> & {
-  ego?: EgoRuntime;
+  ouuut?: EgoRuntime;
 };
 type InstallEgoSdkOptions = {
   context?: Record<string, unknown>;
@@ -44,7 +44,7 @@ export { runMain } from "./run.js";
 /** Release native callbacks before the host discards an embedded Node context. */
 export async function disposeEgoSdk(target: InstallTarget = globalThis) {
   disposeDownloadArtifacts();
-  disposeBrowserRuntime(target.ego);
+  disposeBrowserRuntime(target.ouuut);
 }
 
 const SYNC_HELPERS = new Set(["help"]);
@@ -115,30 +115,30 @@ export function installEgoSdk(
     resetSink();
     installLifecycleFlush(process.stdout);
   }
-  if (target.ego && typeof target.ego === "object") {
-    void emitUpdateNotice(target.ego, (line) => {
+  if (target.ouuut && typeof target.ouuut === "object") {
+    void emitUpdateNotice(target.ouuut, (line) => {
       if (usingDefaultCliLog) bufferOutput(`${line}\n`);
       else cliLogFn(line);
     });
-    target.ego.helpers = installed;
-    target.ego.learnings = {};
-    if (!(target.ego as Record<symbol, unknown>)[EGO_WRAPPED]) {
+    target.ouuut.helpers = installed;
+    target.ouuut.learnings = {};
+    if (!(target.ouuut as Record<symbol, unknown>)[EGO_WRAPPED]) {
       const taskSelection: { spaceId?: unknown } = {};
-      wrapCreateTab(target.ego);
-      wrapUseTaskSpace(target.ego, taskSelection);
+      wrapCreateTab(target.ouuut);
+      wrapUseTaskSpace(target.ouuut, taskSelection);
       wrapInvalidating(
-        target.ego,
+        target.ouuut,
         ["closeTaskSpace", "createTaskSpace", "claimTaskSpace"],
         () => {
           taskSelection.spaceId = undefined;
         },
       );
-      Object.defineProperty(target.ego, EGO_WRAPPED, {
+      Object.defineProperty(target.ouuut, EGO_WRAPPED, {
         value: true,
         enumerable: false,
       });
     }
-    exposeEgoMethods(target, target.ego);
+    exposeEgoMethods(target, target.ouuut);
   }
   return target;
 }

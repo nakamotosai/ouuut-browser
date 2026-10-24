@@ -166,8 +166,8 @@ test("scroll propagates user-control errors from wheel dispatch", async () => {
 });
 
 test("click triggers probe fallback when CDP click is not trusted", async () => {
-  const originalEgo = globalThis.ego;
-  globalThis.ego = { sendCDPMessage: () => {} };
+  const originalEgo = globalThis.ouuut;
+  globalThis.ouuut = { sendCDPMessage: () => {} };
   let probeEvaluateCount = 0;
   const evaluateExpressions = [];
   const restore = setOverrides({
@@ -195,8 +195,8 @@ test("click triggers probe fallback when CDP click is not trusted", async () => 
     await click("#target");
   } finally {
     restore();
-    if (originalEgo === undefined) delete globalThis.ego;
-    else globalThis.ego = originalEgo;
+    if (originalEgo === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = originalEgo;
   }
 
   // 2 probe Runtime.evaluate calls: install + finish (element resolution excluded)
@@ -223,8 +223,8 @@ test("click triggers probe fallback when CDP click is not trusted", async () => 
 });
 
 test("click absorbs CDP timeout when probe fallback succeeds", async () => {
-  const originalEgo = globalThis.ego;
-  globalThis.ego = { sendCDPMessage: () => {} };
+  const originalEgo = globalThis.ouuut;
+  globalThis.ouuut = { sendCDPMessage: () => {} };
   let probeEvaluateCount = 0;
   const restore = setOverrides({
     cdpOverride(method, params, sessionId) {
@@ -253,8 +253,8 @@ test("click absorbs CDP timeout when probe fallback succeeds", async () => {
     await click("#target");
   } finally {
     restore();
-    if (originalEgo === undefined) delete globalThis.ego;
-    else globalThis.ego = originalEgo;
+    if (originalEgo === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = originalEgo;
   }
 
   assert.ok(

@@ -93,7 +93,7 @@ test("waitForNetworkIdle survives a bridge that rejects Network.enable", async (
 });
 
 test("browser waitForNetworkIdle preserves events and observes requests already in flight", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const methods = [];
   let now = 0;
   let finished = false;
@@ -135,7 +135,7 @@ test("browser waitForNetworkIdle preserves events and observes requests already 
       );
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
   const restore = setOverrides({
     now: () => now,
     sleep: async (ms) => {
@@ -168,13 +168,13 @@ test("browser waitForNetworkIdle preserves events and observes requests already 
   } finally {
     restore();
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("browser waitForNetworkIdle does not hide a user-control hard stop", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   let failTargetRefresh = false;
   const runtime = {
     async listTabs() {
@@ -215,7 +215,7 @@ test("browser waitForNetworkIdle does not hide a user-control hard stop", async 
       });
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
 
   try {
     await ensureSession("page-main");
@@ -230,7 +230,7 @@ test("browser waitForNetworkIdle does not hide a user-control hard stop", async 
     );
   } finally {
     invalidateSession();
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });

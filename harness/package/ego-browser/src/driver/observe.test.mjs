@@ -16,7 +16,7 @@ import {
 import { setOverrides } from "../../dist/src/state.js";
 
 function withCdpRuntime(fn) {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const sent = [];
   const runtime = {
     async listTabs() {
@@ -66,24 +66,24 @@ function withCdpRuntime(fn) {
       );
     },
   };
-  globalThis.ego = runtime;
+  globalThis.ouuut = runtime;
   invalidateSession();
   return Promise.resolve()
     .then(() => fn({ runtime, sent }))
     .finally(() => {
       invalidateSession();
       if (previous === undefined) {
-        delete globalThis.ego;
+        delete globalThis.ouuut;
       } else {
-        globalThis.ego = previous;
+        globalThis.ouuut = previous;
       }
     });
 }
 
 test("snapshot compacts the native result before returning it", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const calls = [];
-  globalThis.ego = {
+  globalThis.ouuut = {
     async snapshot(options) {
       calls.push(options);
       return {
@@ -103,15 +103,15 @@ test("snapshot compacts the native result before returning it", async () => {
     assert.equal(result.content, "root\n  button [ref=1]");
     assert.equal(result.refs[0].loc, undefined);
   } finally {
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 
 test("snapshotText forwards a subtree root to the native snapshot", async () => {
-  const previous = globalThis.ego;
+  const previous = globalThis.ouuut;
   const calls = [];
-  globalThis.ego = {
+  globalThis.ouuut = {
     async snapshot(options) {
       calls.push(options);
       return { content: "button [ref=21]", refs: [] };
@@ -132,8 +132,8 @@ test("snapshotText forwards a subtree root to the native snapshot", async () => 
       },
     ]);
   } finally {
-    if (previous === undefined) delete globalThis.ego;
-    else globalThis.ego = previous;
+    if (previous === undefined) delete globalThis.ouuut;
+    else globalThis.ouuut = previous;
   }
 });
 

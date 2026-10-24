@@ -84,8 +84,8 @@ class FakeEgo {
 }
 
 async function runTaskspaceScript(ego, code) {
-  const previous = globalThis.ego;
-  globalThis.ego = ego;
+  const previous = globalThis.ouuut;
+  globalThis.ouuut = ego;
   const stdout = captureStream();
   const stderr = captureStream();
   try {
@@ -98,9 +98,9 @@ async function runTaskspaceScript(ego, code) {
     return { exitCode, stdout: stdout.text(), stderr: stderr.text() };
   } finally {
     if (previous === undefined) {
-      delete globalThis.ego;
+      delete globalThis.ouuut;
     } else {
-      globalThis.ego = previous;
+      globalThis.ouuut = previous;
     }
   }
 }
@@ -127,7 +127,7 @@ test("taskspace e2e creates and selects a missing task space", async () => {
     ego,
     `
     const task = await useOrCreateTaskSpace("checkout-flow");
-    cliLog(JSON.stringify({ task, selected: ego.selectedId }));
+    cliLog(JSON.stringify({ task, selected: ouuut.selectedId }));
   `,
   );
 
@@ -164,7 +164,7 @@ test("taskspace e2e reuses an existing agent-owned task space", async () => {
     ego,
     `
     const task = await useOrCreateTaskSpace(7);
-    cliLog(JSON.stringify({ task, selected: ego.selectedId }));
+    cliLog(JSON.stringify({ task, selected: ouuut.selectedId }));
   `,
   );
 
@@ -196,7 +196,7 @@ test("taskspace e2e claims and selects an existing user-owned task space", async
     ego,
     `
     const task = await claimTaskSpace("checkout-flow");
-    cliLog(JSON.stringify({ task, selected: ego.selectedId }));
+    cliLog(JSON.stringify({ task, selected: ouuut.selectedId }));
   `,
   );
 
@@ -268,7 +268,7 @@ test("taskspace e2e exposes newTaskSpace and claimTaskSpace as helpers", async (
       newType: typeof newTaskSpace,
       switchType: typeof switchTaskSpace,
       claimType: typeof claimTaskSpace,
-      rawClaimType: typeof ego.claimTaskSpace
+      rawClaimType: typeof ouuut.claimTaskSpace
     }));
   `,
   );

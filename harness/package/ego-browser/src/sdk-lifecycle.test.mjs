@@ -12,7 +12,7 @@ test("disposeEgoSdk releases native callbacks and rejects pending CDP work", () 
   ).href;
   const script = `
     const { existsSync } = await import("node:fs");
-    globalThis.ego = {
+    globalThis.ouuut = {
       respond: true,
       sendCDPMessage(payload) {
         const request = JSON.parse(payload);
@@ -27,10 +27,10 @@ test("disposeEgoSdk releases native callbacks and rejects pending CDP work", () 
     const runtime = await import(${JSON.stringify(runtimeUrl)});
     const downloads = await import(${JSON.stringify(downloadsUrl)});
     await runtime.browserCdp("Target.getTargets", {}, undefined, 1_000);
-    if (typeof ego.onCDPMessage !== "function") {
+    if (typeof ouuut.onCDPMessage !== "function") {
       throw new Error("CDP callbacks were not installed");
     }
-    ego.respond = false;
+    ouuut.respond = false;
     const pending = runtime.browserCdp("Target.getTargets", {}, undefined, 10_000);
     let downloadPath;
     const downloadWait = downloads.preparePageDownload({
@@ -44,7 +44,7 @@ test("disposeEgoSdk releases native callbacks and rejects pending CDP work", () 
     await downloadWait.ready("session-download");
     if (!existsSync(downloadPath)) throw new Error("download directory was not created");
     await sdk.disposeEgoSdk();
-    if (ego.onCDPMessage !== undefined || ego.onSendCDPMessageError !== undefined) {
+    if (ouuut.onCDPMessage !== undefined || ouuut.onSendCDPMessageError !== undefined) {
       throw new Error("disposeEgoSdk left native callbacks installed");
     }
     if (existsSync(downloadPath)) {
@@ -73,7 +73,7 @@ test("disposeEgoSdk releases native callbacks and rejects pending CDP work", () 
 test("the embedded SDK explains that browser globals belong inside Page.evaluate", () => {
   const sdkUrl = new URL("../dist/src/index.js", import.meta.url).href;
   const script = `
-    globalThis.ego = {};
+    globalThis.ouuut = {};
     await import(${JSON.stringify(sdkUrl)});
     const checks = [
       ["document", () => document.body],

@@ -26,6 +26,41 @@ CONTRIBUTING.md .gitignore lefthook.yml` —— 那是**上游自己的 agent �
 放进本项目会形成嵌套的 agent 配置,**可能被当作本项目的规则读进去** —— 那是污染。
 **功能代码一行没删。**
 
+### 本地改动 #1 · 命名空间改名 `ego` → `ouuut`
+
+**唯一正本在 manifest 的 `local_modifications`**(逐文件记录上游/本地 sha256)。这里只记**为什么**与**怎么验**。
+
+- **为什么**:我们的原生层命名空间定为 **`globalThis.ouuut`**
+  (`docs/原生层接口.md` §一,理由是避免与装了 ego lite 的机器冲突)。
+  而上游 harness 通篇读写 `globalThis.ego` ⇒ 不改就接不上。
+- **改了什么**(16 个文件):
+  | 写法 | 说明 |
+  |---|---|
+  | `globalThis.ego` | 主体(198 处),机械替换 |
+  | `(globalThis as any).ego` | **类型断言写法 —— grep `globalThis\.ego` 抓不到它**,共 3 处 |
+  | `target.ego` / `InstallTarget.ego?: EgoRuntime` | `installEgoSdk(target = globalThis)` 的字段就是命名空间别名,共 11 处 |
+  | eval 脚本文本里的**裸标识符** `ego` | `runMain` 执行的用户脚本里写的是裸 `ego`(等于全局),共 4 处 |
+- **没改什么(故意的)**:
+  - 产品名与路径:`ego-browser`、`ego-errors.js`、`.ego-browser` 状态目录、剪贴板锁名
+  - `EGO_*` **错误码**(`EGO_TASK_SPACE_USER_IN_CONTROL` 等)。`docs/原生层接口.md` 要求改叫
+    `OUUUT_*`,但那属于**原生层接线时**的活(要连带改 harness 的映射),不在本次改名范围
+  - 本地变量名 `ego`(`const ego = globalThis.ouuut;`)—— 纯局部名,留着 diff 更小
+  - 上游**文档**(`docs/native-bindings-api.md` 等):那是我们赖以立身的**历史契约原件**,
+    改它等于篡改出处
+- **怎么验**:`node --test "src/**/*.test.mjs"` —— 改名前后**失败集合逐条相同**
+  (532 测试 / 526 过 / **6 挂**,那 6 条是上游自带的、与改名无关的 CI/发布守卫类测试)。
+  **判据是「失败集合不变」,不是「全绿」** —— 基线本来就不绿。
+- **跑测试的前提**(否则测试跑不起来,别误判成改名坏了):
+  ```bash
+  cd harness/package/ego-browser
+  npm ci --ignore-scripts   # ⚠️ 必须 --ignore-scripts:上游 prepare 要跑 lefthook install,
+                            #    而 lefthook.yml 属于 excluded_top_level ⇒ 不加就 npm error
+  npm run build             # 31/36 个测试 import 的是 dist/,不是 src/
+  node --test "src/**/*.test.mjs"
+  ```
+  `node_modules/` 与 `dist/` 都是构建产物,根 `.gitignore` 已忽略,也记在 manifest 的
+  `generated_not_in_files` 里。
+
 ---
 
 ## 二、我们从这里拿什么(与 `docs/决策记录.md` ADR-004 对应)

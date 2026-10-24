@@ -451,7 +451,7 @@ async function finishDragProbe(
 }
 
 function canProbeInputFallback() {
-  return Boolean((globalThis as any).ego?.sendCDPMessage);
+  return Boolean((globalThis as any).ouuut?.sendCDPMessage);
 }
 
 /**
@@ -589,7 +589,7 @@ export async function scrollToBottomUntil(
 }
 
 function maybeHighlight(point: Point, label?: string) {
-  const ego = (globalThis as any).ego;
+  const ego = (globalThis as any).ouuut;
   if (!ego) return;
   ego.animationHighlightMouseToPosition?.(point.x, point.y);
   if (label) {
