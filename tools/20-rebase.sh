@@ -60,17 +60,19 @@ export DEPOT_TOOLS_WIN_TOOLCHAIN=0
 # 2) `build/vs_toolchain.py` 只用 `%ProgramFiles%\...\2022\<版本>` 找 VS,
 #    而本机 BuildTools 在 **Program Files (x86)** 下 —— 它的官方逃生口是这个变量。
 export vs2022_install="C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools"
+
+# **不再需要** SDK 版本 / NTDDI 的覆盖了 ——
+# 我们已用 `tools/install-windows-sdk-nuget.py` 装好 **SDK 10.0.28000.0**
+# (它里面 `sdkddkver.h` 定义了上游要的 `NTDDI_WIN11_BR`)。于是走的是
+# **上游默认配置**,不需要构建补丁。
 #
-# 3) 上游把 Windows SDK 版本**硬钉成 10.0.28000.0**(两处:`build/vs_toolchain.py` 与
-#    `build/toolchain/win/setup_toolchain.py`,都无兜底),而本机只有 10.0.26100.0。
-#    补丁 0003 让这两处优先读本变量。不设它时行为与上游一致。
-export OUUUT_WINDOWS_SDK_VERSION="10.0.26100.0"
-#
-# 4) 上游写死 `NTDDI_VERSION=NTDDI_WIN11_BR`,而 SDK 10.0.26100 **没有这个宏**
-#    (只定义到 `NTDDI_WIN11_GE`)。未定义标识符在 `#if` 里当 0 → `minwinbase.h`
-#    跳过整段类型声明 → 报 `unknown type name 'FILE_INFO_BY_HANDLE_CLASS'`。
-#    补丁 0004 让它优先读本变量。不设它时行为与上游一致。
-export OUUUT_NTDDI_VERSION="NTDDI_WIN11_GE"
+# ⚠️ 如果你手上**只有旧 SDK**(如 26100),上游会在两处卡住:
+#    - `SDK_VERSION = '10.0.28000.0'` 硬钉在 `build/vs_toolchain.py` 与
+#      `build/toolchain/win/setup_toolchain.py`
+#    - `NTDDI_VERSION=NTDDI_WIN11_BR` 硬钉在 `build/config/win/BUILD.gn`,
+#      而 `base/win/windows_version.cc` 会 `#error Windows 10.0.28000.0 SDK or higher required.`
+#    那两条已从本仓库撤除(用上游默认更省事)。真需要时的做法见 chromium/README.md §二·五。
+unset PYTHONUTF8 PYTHONIOENCODING || true
 
 DRY_RUN=0
 TARGET=""

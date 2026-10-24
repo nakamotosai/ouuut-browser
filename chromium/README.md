@@ -20,7 +20,59 @@
 
 ---
 
-## 二、跑通 M1 的完整步骤
+## 二·五、本机实测的工具链配方(**2026-10-24 全部验证过**)
+
+> 这一节是踩了 7 次之后回填的。**照它做,别照 Chromium 官方文档做** ——
+> 官方文档假设你装的是标准 VS 与标准 SDK,而本机两样都不是。
+> 每一关的完整取证见 `docs/坑与解法.md` 坑-21。
+
+### 一次性:装对组件
+
+```powershell
+# ① C++ 工作负载 + SDK + **ATL**(ATL 不在 includeRecommended 里,必须显式加)
+#    用 bootstrapper,**不要用 vs_installer modify**(见下方「不要做什么」)
+& "$env:TEMP\vs_BuildTools.exe" --quiet --wait --norestart --nocache `
+    --add Microsoft.VisualStudio.Workload.VCTools `
+    --add Microsoft.VisualStudio.Component.Windows11SDK.26100 `
+    --add Microsoft.VisualStudio.Component.VC.ATL `
+    --includeRecommended
+```
+
+```powershell
+# ② SDK 的 Debugging Tools —— VS 组件里没有,catalog 里也没有单独的组件。
+#    它只硬要求一个文件:dbghelp.dll。SDK **自己**的 App Certification Kit 里就有。
+$d = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64'
+New-Item -ItemType Directory -Force $d | Out-Null
+Copy-Item 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\DbgHelp.dll' "$d\dbghelp.dll" -Force
+Copy-Item 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\symsrv.dll'  "$d\symsrv.dll"  -Force
+```
+
+### 每次构建:四个环境变量 + 两个 unset
+
+```bash
+export DEPOT_TOOLS_WIN_TOOLCHAIN=0
+export vs2022_install="C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools"
+export OUUUT_WINDOWS_SDK_VERSION="10.0.26100.0"
+export OUUUT_NTDDI_VERSION="NTDDI_WIN11_GE"
+unset PYTHONUTF8 PYTHONIOENCODING
+```
+
+四个变量**都已写进 `tools/20-rebase.sh`**,正常情况下你不需要手动设。
+两个 `unset` 也在脚本里。
+
+### **不要做什么**(都是实测撞过的墙)
+
+| 不要 | 为什么 |
+|---|---|
+| 用 `vs_installer.exe modify --add ...` 补装组件 | 本机 VS 实例**未正确注册**(注册表 `Setup\instanceIds` 为空),它认不出命令 → **退 87 并打印用法帮助**。用 bootstrapper |
+| 在 gn args 里写 `visual_studio_path` 等 | 那条分支**上游客是坏的**(`visual_studio_runtime_dirs` 列表 vs 消费者要字符串)→ `This is not a string`。用两个环境变量让自动探测工作 |
+| 用 `vswhere -products *` 判断 VS 装没装 | 本机**看不到**这个实例。要查 `cl.exe` 与 SDK 目录**实体** |
+| 构建时带着 `PYTHONUTF8=1` | `set_appcontainer_acls.py` 不指定编码读 `icacls`(本机输出 GBK)→ `UnicodeDecodeError` |
+| 直接装 SDK 10.0.28000(上游钉的版本) | `vs_installer --add ...Windows11SDK.28000` 退 87;VS catalog 里也没有。想装得走 NuGet(`Microsoft.Windows.SDK.CPP` 有 `10.0.28000.2705`)—— 见坑-21 |
+
+---
+
+## 二·六、跑通 M1 的完整步骤
 
 ### 第 0 步(需要用户):装工具链
 
