@@ -254,5 +254,19 @@
     "src/third_party/devtools-frontend/src/third_party/node/win": [
       "2f710ced2db2beb7c3debf6097196c35ee5adb74"
     ]
+  },
+  "src/third_party/webpagereplay": {
+    "src/third_party/webpagereplay/buildtools/win-format": [
+      "565cab9c66d61360c27c7d4df5defe1a78ab56d3"
+    ],
+    "src/third_party/webpagereplay/buildtools/mac-format": [
+      "7d46d237f9664f41ef46b10c1392dcb559250f25"
+    ],
+    "src/third_party/webpagereplay/buildtools/mac_arm64-format": [
+      "8503422f469ae56cc74f0ea2c03f2d872f4a2303"
+    ],
+    "src/third_party/webpagereplay/buildtools/linux64-format": [
+      "79a7b4e5336339c17b828de10d80611ff0f85961"
+    ]
   }
 }

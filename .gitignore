@@ -34,8 +34,13 @@ credentials*
 /chromium/*.tar.*
 # rebase 中途失败可能留下的临时文件(trap 会清,但审核规则里兜一层)
 /chromium/UPSTREAM.tmp
+# gclient 自己的产物与中途状态,都不该入库
 /chromium/.gclient
 /chromium/.gclient_entries
+/chromium/.gcs_entries
+/chromium/_bad_scm/
+/chromium/.cipd/
+/chromium/.cipd_bin/
 
 # === 语言生态 ===
 node_modules/
