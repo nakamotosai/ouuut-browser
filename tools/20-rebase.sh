@@ -158,29 +158,68 @@ if [ -f "$UPSTREAM_FILE" ]; then
 fi
 
 # ---- 2/7 取版本 ------------------------------------------------------------
-log "2/7 gclient sync"
+log "2/7 取版本"
 cd "$SRC_DIR"
-if [ "$REF_KIND" = "tag" ]; then
-  if [ "$DRY_RUN" -eq 0 ]; then
-    git fetch --tags "origin" \
+
+# ⚠️⚠️ 本仓库是 **`--depth 1` 浅克隆**,而且 `remote.origin.fetch` 是
+#      `+refs/tags/*:refs/tags/*`。这两条合起来意味着:
+#      **浅克隆里任何想补齐历史的 `git fetch`(尤其带 `--tags`)都会去拉整棵
+#      chromium 历史 —— 实测要 29,397,996 个对象**,几十小时且可能撑爆磁盘。
+#      (2026-10-24 实测踩过:`git fetch --tags …` 的 index-pack 卡了 50 分钟。)
+#      所以这里的铁律是:**绝不**出现 `--tags` / `--with_tags` / `--with_branch_heads`。
+#
+# 正确策略:
+#   * 目标 tag 已在本地 → **一个字节都不下载**,直接检出;
+#   * 目标 tag 不在本地 → 用 **`--depth 1`** 只拉这一个 tag;
+#   * src 已在目标 revision → 跳过检出(**rebase 必须幂等、可重跑**)。
+
+TARGET_SHA=""
+if [ "$REF_KIND" = "tag" ] && git rev-parse --verify -q "refs/tags/${CHROMIUM_REF}" >/dev/null 2>&1; then
+  TARGET_SHA="$(git rev-parse "refs/tags/${CHROMIUM_REF}")"
+  printf '  tag %s 已在本地(%s)→ 无需下载\n' "$CHROMIUM_REF" "${TARGET_SHA:0:10}"
+fi
+[ -n "$TARGET_SHA" ] || TARGET_SHA="$CHROMIUM_REF"
+
+CUR_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  printf '  [dry-run] 目标 %s(按 %s);已在本地=%s\n' "$CHROMIUM_REF" "$REF_KIND" \
+    "$( [ "$TARGET_SHA" != "$CHROMIUM_REF" ] && echo 是 || echo 否 )"
+  printf '  [dry-run] git checkout -f %s(每次复位,保证补丁从 pristine 打)\n' "$TARGET_SHA"
+else
+  # tag 不在本地才拉 —— 且 **--depth 1**,只拉一层
+  if [ "$REF_KIND" = "tag" ] && [ "$TARGET_SHA" = "$CHROMIUM_REF" ]; then
+    git fetch --depth 1 origin \
       "refs/tags/${CHROMIUM_REF}:refs/tags/${CHROMIUM_REF}" \
       || die "拉不到 tag ${CHROMIUM_REF}。
   确认该 tag 存在于 chromium.googlesource.com/chromium/src。
   若这个版本只有 commit、没有 tag,请直接把 commit SHA 作为参数传入(rebase 会按 sha 处理)。"
-    git checkout -f "refs/tags/${CHROMIUM_REF}"
-  else
-    printf '  [dry-run] git fetch --tags origin refs/tags/%s:refs/tags/%s\n' "$CHROMIUM_REF" "$CHROMIUM_REF"
-    printf '  [dry-run] git checkout -f refs/tags/%s\n' "$CHROMIUM_REF"
+    TARGET_SHA="$(git rev-parse "refs/tags/${CHROMIUM_REF}")"
   fi
-else
-  if [ "$DRY_RUN" -eq 0 ]; then
-    git fetch origin "$CHROMIUM_REF" || die "拉不到 commit ${CHROMIUM_REF}(注意本仓库是 partial clone,需要能访问 chromium.googlesource.com)"
-    git checkout -f FETCH_HEAD
-  else
-    printf '  [dry-run] git fetch origin %s && git checkout -f FETCH_HEAD\n' "$CHROMIUM_REF"
+  # sha 目标:同样浅拉(浅克隆里 `git fetch origin <sha>` 会拉历史,故必须 --depth 1)
+  if [ "$REF_KIND" = "sha" ]; then
+    if git rev-parse --verify -q "${TARGET_SHA}^{commit}" >/dev/null 2>&1; then
+      printf '  commit %s 已在本地 → 无需下载\n' "${TARGET_SHA:0:10}"
+    else
+      git fetch --depth 1 origin "$TARGET_SHA" \
+        || die "拉不到 commit ${TARGET_SHA}(注意本仓库是**浅克隆**,需要能访问 chromium.googlesource.com)"
+    fi
   fi
+
+  # **每次都在目标 revision 上复位** —— 即使已经在目标上也要做。
+  # 理由:`checkout -f` 会把上一次 rebase 打上的补丁**复原成 pristine**,
+  # 于是 3/7 的 `git apply` 永远从干净状态开始 → rebase 幂等、可重跑。
+  # (已在目标上时这一步是廉价的;未跟踪的依赖不受影响。)
+  if [ "$CUR_SHA" = "$TARGET_SHA" ]; then
+    printf '  已在目标 revision(%s)→ 仅复位工作树\n' "${TARGET_SHA:0:10}"
+  fi
+  git checkout -f "$TARGET_SHA"
 fi
-run "$GCLIENT" sync --with_branch_heads --with_tags
+
+# gclient sync:**不加** `--with_tags` / `--with_branch_heads`(理由见上)。
+# 本仓库 `.gclient` 里 src 是 `"managed": False` —— gclient **不会**改 src 的 git 状态,
+# 只按当前 src 的 DEPS 去同步各依赖;依赖已就位时这是一次廉价的空转。
+run "$GCLIENT" sync
 
 # gclient 的第一次运行会把 gn / ninja / autoninja 装进 depot_tools(bootstrap),
 # 所以这里再解析一次 —— 上一轮它们可能还不存在。
