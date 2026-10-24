@@ -1,8 +1,0 @@
-
-[1;36m=== 目标:ungoogled tag=156.0.8078.47-1 → chromium tag=156.0.8078.47[0m
-
-[1;36m=== 1/3 写 .gclient[0m
-  wrote F:\projects\ouuut-browser\chromium\.gclient
-
-[1;36m=== 2/3 git clone chromium/src(partial clone:blob 按需拉取)[0m
-Cloning into 'F:\projects\ouuut-browser\chromium\src'...

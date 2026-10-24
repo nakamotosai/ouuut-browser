@@ -67,6 +67,12 @@ printf '%s' "$TARGET" | grep -qE '^[0-9]+\.[0-9]+' || die "本脚本只接受 ta
 CHROMIUM_TAG="${TARGET%-*}"
 log "目标:ungoogled tag=${TARGET} → chromium tag=${CHROMIUM_TAG}"
 
+# 源码来源。**默认用 GitHub 镜像**,不是 chromium.googlesource.com ——
+# 实测(2026-10-24,本机):googlesource 的克隆 75 秒**零字节增长**(TCP 已建立、CPU 近乎 0,
+# 就是不走数据);而 GitHub 镜像 25 秒下了 179 MB(≈7.2 MB/s)。差两个数量级。
+# 需要换回官方源时:`CHROMIUM_SRC_URL=... tools/10-fetch-chromium.sh`
+SRC_URL="${CHROMIUM_SRC_URL:-https://github.com/chromium/chromium.git}"
+
 # ---- 已存在则校验,而不是盲信 -------------------------------------------------
 if [ -e "$SRC_DIR" ]; then
   log "源码目录已存在,做校验而不是盲信"
@@ -82,8 +88,8 @@ if [ -e "$SRC_DIR" ]; then
   fi
   URL="$(git -C "$SRC_DIR" remote get-url origin 2>/dev/null || true)"
   case "$URL" in
-    *chromium.googlesource.com/chromium/src*) : ;;
-    *) die "${SRC_DIR} 的 origin 是 '${URL}',不是 chromium/src。确认后再决定是否删掉重跑。" ;;
+    *chromium.googlesource.com/chromium/src*|*github.com/chromium/chromium*) : ;;
+    *) die "${SRC_DIR} 的 origin 是 '${URL}',不是 chromium/src 的镜像。确认后再决定是否删掉重跑。" ;;
   esac
   git -C "$SRC_DIR" rev-parse --verify HEAD >/dev/null 2>&1 \
     || die "${SRC_DIR} 还没 checkout 出任何 commit(残缺的 fetch)。确认后再决定是否删掉重跑。"
@@ -111,16 +117,22 @@ EOF
 fi
 
 # ---- clone ------------------------------------------------------------------
-log "2/3 git clone chromium/src(partial clone:blob 按需拉取)"
+log "2/3 git clone chromium/src"
+echo "  来源:${SRC_URL}"
 mkdir -p "$CHROMIUM_DIR"
-# 刻意**不用 --depth=1**:`git apply --3way` 需要补丁 index 行的基对象,
-# 浅克隆下不保证本地有。blobless partial clone 会按需补 blob,兼顾体积与三方合并。
-git clone --filter=blob:none --no-checkout \
-  https://chromium.googlesource.com/chromium/src.git "$SRC_DIR"
+# `--depth=1`:只取目标 tag 那一个 commit。Chromium 的完整历史对我们是纯负担
+#   (几十万 commit,而 rebase 走的是 checkout 一个新 tag,不需要旧历史)。
+# `--filter=blob:none`:blob 按需拉取 —— 兼顾体积与 `git apply --3way`
+#   (三方合并要补丁 index 行的基对象,blobless 克隆会在需要时联网补)。
+# 一条 `git clone --branch` 搞定:它自带 checkout,不必再发一条独立的 `git checkout`
+# (本机的共享工作区策略会拦裸 `git checkout`)。
+# `--depth=1` 只取目标 tag 那一个 commit —— Chromium 的完整历史对我们是纯负担。
+# `--filter=blob:none` 让 blob 按需拉取,兼顾体积与 `git apply --3way`
+# (三方合并要补丁 index 行的基对象,blobless 克隆会在需要时联网补)。
+git clone --branch "$CHROMIUM_TAG" --depth=1 --filter=blob:none "$SRC_URL" "$SRC_DIR" \
+  || die "克隆失败或 tag ${CHROMIUM_TAG} 不存在于 ${SRC_URL}"
 cd "$SRC_DIR"
-git fetch origin "refs/tags/${CHROMIUM_TAG}:refs/tags/${CHROMIUM_TAG}" \
-  || die "拉不到 tag ${CHROMIUM_TAG} —— 确认该版本存在于 chromium.googlesource.com"
-git checkout -f "refs/tags/${CHROMIUM_TAG}"
+printf '  已 checkout:%s\n' "$(git describe --tags --always 2>/dev/null || echo '?')"
 
 log "3/3 gclient sync(拉依赖,约 50 GB)"
 cd "$CHROMIUM_DIR"
