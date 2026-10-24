@@ -98,6 +98,43 @@ test("启动参数:显式给了 user-data-dir 就用给的(留给 real 档案导
   assert.equal(args.filter((a) => a.startsWith("--user-data-dir=")).length, 1, "不能出现两个");
 });
 
+// ---- 窗口位置:给"把 agent 浏览器放到副屏"用的 ------------------------------
+//
+// 起因:调试时浏览器弹在使用者**主屏**上,而他在主屏做别的事。
+// 这不是调试便利,是产品该有的能力 —— agent 浏览器不该抢使用者的主屏。
+
+test("窗口位置:默认**不给**位置,只给 --start-maximized", () => {
+  const { args } = buildBrowserArgs({}, {});
+  assert.ok(args.includes("--start-maximized"));
+  assert.equal(args.filter((a) => a.startsWith("--window-position")).length, 0);
+});
+
+test("★ 窗口位置:给了位置就钉住,且**不再** --start-maximized(否则会跑到别的屏)", () => {
+  const { args } = buildBrowserArgs({ windowPosition: "1707,0", windowSize: "1380,950" }, {});
+  assert.ok(args.includes("--window-position=1707,0"));
+  assert.ok(args.includes("--window-size=1380,950"));
+  assert.ok(!args.includes("--start-maximized"), "最大化会无视指定位置");
+});
+
+test("窗口位置:环境变量也能给(便于整批运行时统一钉住)", () => {
+  const { args } = buildBrowserArgs({}, { OUUUT_WINDOW_POSITION: "1707,0", OUUUT_WINDOW_SIZE: "1380,950" });
+  assert.ok(args.includes("--window-position=1707,0"));
+  assert.ok(args.includes("--window-size=1380,950"));
+});
+
+test("窗口位置:选项**优先于**环境变量", () => {
+  const { args } = buildBrowserArgs({ windowPosition: "0,0" }, { OUUUT_WINDOW_POSITION: "1707,0" });
+  assert.ok(args.includes("--window-position=0,0"));
+  assert.ok(!args.includes("--window-position=1707,0"));
+});
+
+test("parseArgs 认 --window-position / --window-size,且缺值时报友好错误", () => {
+  const o = parseArgs(["--window-position", "1707,0", "--window-size", "1380,950"]);
+  assert.equal(o.windowPosition, "1707,0");
+  assert.equal(o.windowSize, "1380,950");
+  assert.match(parseArgs(["--window-position"]).error, /需要一个值/);
+});
+
 test("启动参数:浏览器路径优先 --browser,其次 OUUUT_BROWSER,最后本仓默认产物", () => {
   assert.equal(buildBrowserArgs({ browser: "X:\\a.exe" }, {}).exe, "X:\\a.exe");
   assert.equal(buildBrowserArgs({}, { OUUUT_BROWSER: "Y:\\b.exe" }).exe, "Y:\\b.exe");

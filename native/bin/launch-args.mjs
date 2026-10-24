@@ -36,6 +36,8 @@ export const USAGE = `ouuut —— 自带 Chromium 的 agent 浏览器
   --namespace <name>      注入的全局名(默认 ouuut)
   --headless              无头(默认有头 —— 与上游一致)
   --user-data-dir <path>  档案目录(**默认给一个临时目录**,不用你的真实档案)
+  --window-position <x,y> 窗口位置(如 1920,0 —— 把浏览器放到副屏,不抢主屏)
+  --window-size <w,h>     窗口尺寸(如 1380,960)
   --proxy <url>           代理(同时用 --proxy-bypass-list 放行 loopback/tailnet)
   -h, --help              本帮助
 
@@ -87,6 +89,8 @@ export function parseArgs(argv = []) {
     headless: false,
     browser: null,
     userDataDir: null,
+    windowPosition: null,
+    windowSize: null,
     proxy: null,
     extraEnv: null,
     script: null,
@@ -130,6 +134,16 @@ export function parseArgs(argv = []) {
         out.userDataDir = v;
         break;
       }
+      case "--window-position": {
+        const v = next(); if (v === null) return out;
+        out.windowPosition = v;
+        break;
+      }
+      case "--window-size": {
+        const v = next(); if (v === null) return out;
+        out.windowSize = v;
+        break;
+      }
       case "--proxy": {
         const v = next(); if (v === null) return out;
         out.proxy = v;
@@ -170,14 +184,27 @@ export function buildBrowserArgs(opts = {}, env = {}) {
     // 本项目的默认产物位置(开发机)
     "chromium\\src\\out\\Release\\chrome.exe";
 
+  // 窗口位置/尺寸:选项优先,其次环境变量,最后不给(让窗口管理器决定)。
+  // **必须在拼数组之前算** —— 它被用在数组字面量里。
+  const winPos = opts.windowPosition ?? env.OUUUT_WINDOW_POSITION ?? null;
+  const winSize = opts.windowSize ?? env.OUUUT_WINDOW_SIZE ?? null;
+
   const args = [
     // ---- 通道:不监听任何 TCP 端口 ----
     "--remote-debugging-pipe",
 
     // ---- 那六项里的"要加的" ----
     `--disable-features=${DEFAULT_FEATURES_TO_DISABLE.join(",")}`,
-    // 视口按真实屏幕(不做 1280x720 那种"一看就是自动化"的默认)
-    "--start-maximized",
+    // ---- 视口 / 窗口位置 ----
+    // 默认**不给**位置,交给窗口管理器(即"开在系统认为合适的地方")。
+    // 显式给了位置就钉在那儿 —— 用途:把 agent 浏览器放到副屏,不要抢用户主屏。
+    // (实测场景:本机主屏 0,0 1707×960,副屏 1920,0 1389×970)
+    ...(winPos || winSize
+      ? [
+          ...(winPos ? [`--window-position=${winPos}`] : []),
+          ...(winSize ? [`--window-size=${winSize}`] : []),
+        ]
+      : ["--start-maximized"]),
     // 抑制非代理 UDP(ADR-014);配合 --proxy 用
     "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 
@@ -205,6 +232,7 @@ export function buildBrowserArgs(opts = {}, env = {}) {
   // 显式传 `--user-data-dir` 时用传的(测试与后续的 `real` 档案导入都靠它)。
   const userDataDir = opts.userDataDir || defaultUserDataDir(opts.namespace, opts.pid ?? process.pid);
   args.push(`--user-data-dir=${userDataDir}`);
+
   if (opts.proxy) {
     args.push(`--proxy-server=${opts.proxy}`);
     args.push("--proxy-bypass-list=<-loopback>;localhost;127.0.0.1;*.ts.net");
