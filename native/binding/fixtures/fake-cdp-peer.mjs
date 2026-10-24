@@ -47,8 +47,30 @@ const handlers = {
   // 最朴素的一条:原样回显
   "Fake.echo": (id, params) => reply(id, { echo: params }),
 
-  // **拆包**:把一条响应切成 3 段、中间隔一点时间再写。
-  // 任何"一个 chunk = 一条消息"的实现都会在这里炸。
+  // ---- 真实 CDP 方法的最小替身(供 listTabs / createTab 走通)----
+  "Target.getTargets": (id) =>
+    reply(id, {
+      targetInfos: [
+        { targetId: "T-back", type: "page", url: "https://back.example/", title: "后台页", attached: false },
+        { targetId: "T-front", type: "page", url: "https://front.example/", title: "前台页", attached: true },
+      ],
+    }),
+  "Target.createTarget": (id, params) => reply(id, { targetId: "T-new-" + (params?.url ? "with-url" : "blank") }),
+  // harness 靠这个拿到 sessionId,拿不到就抛「Target.attachToTarget returned no sessionId」
+  "Target.attachToTarget": (id, params) => reply(id, { sessionId: "S-fake-" + (params?.targetId ?? "?") }),
+  "Browser.getVersion": (id) =>
+    reply(id, {
+      protocolVersion: "1.3",
+      product: "FakeBrowser/156.0.8078.47",
+      revision: "@fake",
+      userAgent: "Mozilla/5.0 (fake)",
+      jsVersion: "15.6",
+    }),
+
+  // 显式要求:未知方法回一个**故意的错误**(用来测错误路径)
+  "Fake.unknownMethod": (id) => replyError(id, "本替身不认识这个方法"),
+
+  // 拆包 / 粘包 / 事件 / 超时 / 崩溃 —— 见下
   "Fake.split": (id) => {
     const text = JSON.stringify({ id, result: { split: true, whole: "a".repeat(300) } }) + "\0";
     const third = Math.ceil(text.length / 3);
@@ -109,10 +131,26 @@ fs.createReadStream(null, { fd: IN }).on("data", (chunk) => {
     if (!text) continue;
     try {
       const msg = JSON.parse(text);
-      process.stderr.write(`fake-cdp-peer 收到 ${msg.method}\n`);
+      // **记录 harness 实际发出的每一个方法** —— 这份清单才是"原生层必须支持什么"的权威答案
+      // (人工 grep 会漏掉字符串派发,实测踩到过)。
+      if (msg.method) {
+        try {
+          fs.writeSync(2, `peer-guard: ${msg.method}\n`);
+          // 落文件:stderr 会被 node --test 吞掉,拿不到"harness 到底发了什么"这份清单
+          const logPath = process.env.FAKE_PEER_LOG;
+          if (logPath) fs.appendFileSync(logPath, msg.method + "\n");
+        } catch {
+          /* 日志本身失败不该影响对端 */
+        }
+      }
       const h = handlers[msg.method];
       if (h) h(msg.id, msg.params ?? {});
-      else replyError(msg.id, `未知方法 ${msg.method}`);
+      else if (msg.id !== undefined) {
+        // **未知方法回空响应**,不是错误 —— 本替身的目标是让 harness 的握手**跑完**,
+        // 而不是复刻整套 CDP 协议。要测错误路径请显式用 `Fake.unknownMethod`。
+        // (若这里回错误,harness 会在握手阶段就死,根本走不到我们要验的那一步。)
+        reply(msg.id, {});
+      }
     } catch {
       /* 对端发来的坏包:忽略 */
     }

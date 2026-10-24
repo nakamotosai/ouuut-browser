@@ -85,6 +85,7 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
 
   const pending = new Map(); // id -> {resolve, reject, timer, method}
   const listeners = new Set(); // (message) => void,用于事件与方法级回调
+  const rawListeners = new Set(); // (message) => void,**每一条**解析出来的消息都送这里
   let nextId = 1;
   let closed = false;
   let exitInfo = null;
@@ -111,6 +112,16 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
       // 对端发了非法 JSON —— 这是通道级故障,必须让调用方看见
       failAll(new CdpPipeError(`从 ${name} 收到非法 JSON:${text.slice(0, 200)}`));
       return;
+    }
+    // **原始通道**:透传模式必须看到**每一条**消息,包括 id 不在 pending 里的响应。
+    // (上游 harness 自己分配 CDP id 并发 `{id,method,params}`,我们的层只是管道 ——
+    //  若把"未知 id 的响应"丢掉,harness 就永远等不到回应。)
+    for (const fn of rawListeners) {
+      try {
+        fn(msg);
+      } catch {
+        // 单个订阅者抛错不该掀翻整条通道
+      }
     }
     // CDP 的三类消息:响应(有 id)、事件(有 method 无 id)、(少数)带 id 的事件
     if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
@@ -188,9 +199,26 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
     });
   }
 
+  /** **透传写入**:不登记 pending、不分配 id —— 调用方(harness)自己管 id 与配对。
+   *  这是 `--remote-debugging-pipe` 那条通路的本体。 */
+  function sendRaw(obj) {
+    if (closed) {
+      throw new CdpPipeError(`${name} 已退出(code=${exitInfo?.code}),不能再写`, {
+        code: "OUUUT_CDP_PIPE_CLOSED",
+      });
+    }
+    toChild.write(JSON.stringify(obj) + "\0");
+  }
+
   return {
     child,
     send,
+    sendRaw,
+    /** **原始订阅**:每一条解析出来的消息,包括 id 不在 pending 里的响应 */
+    onRaw(fn) {
+      rawListeners.add(fn);
+      return () => rawListeners.delete(fn);
+    },
     /** 订阅事件流(所有非响应消息)。返回退订函数。 */
     onMessage(fn) {
       listeners.add(fn);

@@ -16,7 +16,7 @@
 | `ego.sendCDPMessage(payload)` | `browser-runtime.ts:351` | `payload` 是 **JSON 字符串**;返回 CDP 响应 | **主传输**。`hasBrowserRuntime()` 就靠 `typeof globalThis.ego.sendCDPMessage === "function"` 判断 |
 | `ego.onCDPMessage` | `sdk-lifecycle.test.mjs:30` | 回调槽 | `disposeEgoSdk()` 必须能摘掉它 |
 | `ego.onSendCDPMessageError` | `sdk-lifecycle.test.mjs:47` | 回调槽 `(message, error_code)` | 同上;**不带 request id** → 任务级失败会 reject 所有 pending |
-| `ego.listTabs()` | `nav.test.mjs:35`、`observe.test.mjs:22`、`waits.test.mjs:180` | 列表 | —— |
+| `ego.listTabs()` | **生产代码**:`browser-runtime.ts:606`、`page-model.ts:696`、`nav.ts:109` | 必须是 `{tabs:[{targetId, active, …}]}`,**至少一条 `active:true`** | ⚠️ **必需** —— `browserCdp` 靠它解析当前 target;给不出活跃页就抛 `no active tab to attach session` |
 | `ego.createTab(...)` | `index.ts:229` | —— | harness 会**包一层**它的返回值(用于失效 session)→ 要容忍被 wrap |
 | `ego.useTaskSpace(spaceId)` | `helpers.ts:161`、`native-gate.ts:136`、`index.ts:217` | —— | 同样**被 wrap**;且 `spaceId` 是 **number** |
 | `ego.createTaskSpace(name)` / `(name, profileId)` | `helpers.ts:198-199` | —— | ⚠️ 代码注释明写:**不要显式传 `undefined`** —— 旧 native 会因多一个参数而报错 |
@@ -75,6 +75,63 @@
 ## 五、还没做的(不掩饰)
 
 - 原生层**一行 C++ 都还没写**(本文件是它的需求书)
-- `harness/` 目前是**未改动的上游副本** —— 还没把它接到我们的原生层上
+- `harness/` **已不再是未改动的副本** —— 命名空间已改名为 `ouuut`(16 文件),
+  逐文件登记在 `harness/.vendored-manifest.json` 的 `local_modifications`;
+  但**还没接到我们的原生层上**(接线见 §六)
 - 冒烟脚本目前只在 ego 上跑过
 - 上游那个 `disposeEgoSdk()` 生命周期钩子还没在我们的入口里落地
+
+---
+
+## 六、接线实录(2026-10-24,**已跑通**)
+
+### 6.1 已经能跑的东西
+
+`native/binding/` 下两片,各有独立验收:
+
+| 文件 | 是什么 | 验收 |
+|---|---|---|
+| `cdp-pipe.mjs` | 通道:CDP over `--remote-debugging-pipe`(不暴露 TCP 端口) | `cdp-pipe.test.mjs` — **11 个用例全过** |
+| `ouuut-runtime.mjs` | `globalThis.ouuut` 的运行时(透传桥 + CDP 直通原语) | `ouuut-runtime.test.mjs` — **7 个用例全过** |
+| `fixtures/fake-cdp-peer.mjs` | **测试替身**:真 pipe 上的假 CDP 对端 | 被上面两个测试使用 |
+
+**最有价值的一条**:`ouuut-runtime.test.mjs` 跑的是 **vendored harness 的真实构建产物**
+(`dist/src/browser-runtime.js`),不是我们复刻的简化版 —— 也就是说
+「**把 `globalThis.ouuut` 换成我们的实现,harness 那条 CDP 通路真的通**」**已经被证**,
+而且不需要起浏览器(对端是假 CDP peer)。
+
+### 6.2 ⚠️ **上一版这份清单是错的**
+
+本文件 §一 原来按「`globalThis.ego.*` 属性访问」grep 出来的 16 个调用点里,
+**漏掉了 `listTabs`** —— 因为 harness 有**字符串派发**(`invokeEgo("listTabs", …)`),
+属性访问的 grep 抓不到。实测一跑就报 `browserEgo(...).listTabs is not a function`。
+
+**教训**:需求清单要从**派发点**与**真实流量**里取,不能只 grep 属性访问。
+
+### 6.3 权威清单:harness **实际发出**的 CDP 方法
+
+让假对端把收到的每个方法落文件,跑一遍完整握手,得到:
+
+```
+Target.setAutoAttach   Target.getTargets   Target.attachToTarget
+Page.enable            Network.enable      Browser.getVersion
+```
+
+**关键:`Runtime.enable` 一次都没出现。**
+
+这直接支撑 ADR-005 的目标(「不主动发 `Runtime.enable`」)—— 而且证据来自
+**上游 harness 的真实产物**,不是我们的假设。也就是说:**这一条不需要我们额外做工作,
+只要我们的层别画蛇添足去发它。**
+
+(对照:`docs/附录B-REA逆向结论.md` 里对 ego 闭源二进制的静态分析也只找到
+「`chrome.dll` 6 处 `Runtime.enable`,其中 5 处在 DevTools frontend/Node inspector 内部,
+1 处是错误示例字符串」。两者互相印证。)
+
+### 6.4 还没接上的
+
+- **任务空间 / 快照 / 交接**的语义(所有权、`EGO_TASK_SPACE_USER_IN_CONTROL` 门、
+  快照化简规则)是**产品行为**,要按 `docs/原生层接口.md` §三～§五 逐条定 —— 下一片
+- **CLI 入口**(对应上游 `ego-browser nodejs <script>`)还没写
+- **真浏览器**那一步没跑:项目策略禁止在命令行裸起浏览器做自动化
+  (见 `docs/坑与解法.md` 与本仓 AGENTS.md),所以「同一段 heredoc 脚本在两个浏览器上跑通」
+  的 ouuut 半边,需要由使用者显式运行本产品的 CLI,或明确的许可
