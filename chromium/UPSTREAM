@@ -1,0 +1,16 @@
+# chromium 版本锚(**由 tools/20-rebase.sh 自动覆写,不要手工改**)
+#
+# 取值依据见 chromium/README.md §三(版本策略)与 docs/决策记录.md ADR-006。
+# 下面这组值取自 2026-10-24 的公开版本查询,用作**首次构建的目标**;
+# 一旦本机真的构建成功,本文件会被 20-rebase.sh 覆写为实测值。
+version=156.0.8078.47-1
+chromium_tag=156.0.8078.47
+# --- 以下字段在被覆写前为空 = 「尚未在本机构建过」 ---
+commit=
+built_at=
+patch_count=0
+patch_digest=
+artifact=
+artifact_sha256=
+gn_args_digest=
+note=尚未在本机构建过。version/chromium_tag 来自 2026-10-24 的 ungoogled-chromium 最新 tag。
