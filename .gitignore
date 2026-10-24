@@ -31,6 +31,10 @@ credentials*
 /chromium/depot_tools/
 /chromium/out/
 /chromium/*.tar.*
+# rebase 中途失败可能留下的临时文件(trap 会清,但审核规则里兜一层)
+/chromium/UPSTREAM.tmp
+/chromium/.gclient
+/chromium/.gclient_entries
 
 # === 语言生态 ===
 node_modules/

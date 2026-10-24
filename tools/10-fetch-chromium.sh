@@ -21,6 +21,10 @@ GCLIENT_FILE="${CHROMIUM_DIR}/.gclient"
 log() { printf '\n\033[1;36m=== %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31m[fatal] %s\033[0m\n' "$*" >&2; exit 1; }
 
+# 路径归一化:Windows 的 Git Bash 下 `pwd` 给 `/f/...`、`git` 给 `F:/...`,
+# 同一个目录字符串永不相等 —— 任何路径比较前都要过这里。
+norm() { ( cd "$1" 2>/dev/null && pwd -P ); }
+
 for d in "F:/depot_tools" "/f/depot_tools" "$HOME/depot_tools" "/c/depot_tools"; do
   if [ -d "$d" ]; then export PATH="${d}:${PATH}"; break; fi
 done
@@ -38,16 +42,23 @@ log "目标:ungoogled tag=${TARGET} → chromium tag=${CHROMIUM_TAG}"
 # ---- 已存在则校验,而不是盲信 -------------------------------------------------
 if [ -e "$SRC_DIR" ]; then
   log "源码目录已存在,做校验而不是盲信"
-  [ -d "$SRC_DIR/.git" ] || die "${SRC_DIR} 存在但不是 git 工作树 —— 删掉它重跑本脚本"
+  [ -d "$SRC_DIR/.git" ] || die "${SRC_DIR} 存在但没有 .git —— 残缺的 checkout。
+  确认里面没有你要留的东西后再删掉重跑本脚本。"
   TOPLEVEL="$(git -C "$SRC_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
-  [ "$TOPLEVEL" = "$SRC_DIR" ] || die "${SRC_DIR} 的仓库根是 ${TOPLEVEL},不是它自己 —— 删掉它重跑本脚本"
+  # 归一化后再比(见 norm() 注释);不归一化在 Windows 上必然不等
+  if [ "$(norm "$TOPLEVEL")" != "$(norm "$SRC_DIR")" ]; then
+    die "${SRC_DIR} 的仓库根是 ${TOPLEVEL},不是它自己。
+  **先别删** —— 这多半是路径写法问题而不是数据问题。手工确认:
+      cd '$SRC_DIR' && git rev-parse --show-toplevel
+  若确实不是它自己,再决定怎么处理。"
+  fi
   URL="$(git -C "$SRC_DIR" remote get-url origin 2>/dev/null || true)"
   case "$URL" in
     *chromium.googlesource.com/chromium/src*) : ;;
-    *) die "${SRC_DIR} 的 origin 是 '${URL}',不是 chromium/src。删掉它重跑本脚本" ;;
+    *) die "${SRC_DIR} 的 origin 是 '${URL}',不是 chromium/src。确认后再决定是否删掉重跑。" ;;
   esac
   git -C "$SRC_DIR" rev-parse --verify HEAD >/dev/null 2>&1 \
-    || die "${SRC_DIR} 还没 checkout 出任何 commit(残缺的 fetch)。删掉它重跑本脚本"
+    || die "${SRC_DIR} 还没 checkout 出任何 commit(残缺的 fetch)。确认后再决定是否删掉重跑。"
   log "校验通过;跟版请用 tools/20-rebase.sh"
   exit 0
 fi

@@ -48,6 +48,17 @@ warn() { printf '\033[1;33m[warn] %s\033[0m\n' "$*" >&2; }
 die()  { printf '\033[1;31m[fatal] %s\033[0m\n' "$*" >&2; exit 1; }
 run()  { if [ "$DRY_RUN" -eq 1 ]; then printf '  [dry-run] %s\n' "$*"; else "$@"; fi; }
 
+# 路径归一化:**必须**用它来比较路径。
+# 在 Windows 的 Git Bash 下,`pwd` 给 POSIX 形(`/f/projects/x`),
+# 而 `git rev-parse --show-toplevel` 给盘符形(`F:/projects/x`)—— 两者是同一个目录,
+# 但字符串永不相等。任何「两个路径是否相同」的判断都要先过这里。
+norm() { ( cd "$1" 2>/dev/null && pwd -P ); }
+
+# 同一个临时文件的清理钩子(见阶段 7)
+TMP_UPSTREAM=""
+cleanup_tmp() { [ -n "$TMP_UPSTREAM" ] && rm -f "$TMP_UPSTREAM" 2>/dev/null || true; }
+trap cleanup_tmp EXIT
+
 # ---- 1/7 前置检查 -----------------------------------------------------------
 log "1/7 前置检查"
 [ -n "${DEPOT_TOOLS:-}" ] || die "找不到 depot_tools。先跑 chromium/README.md §二 第 0 步。"
@@ -58,12 +69,17 @@ command -v gn      >/dev/null || warn "gn 不在 PATH,稍后 gclient sync 会把
 # **关键守卫**:必须确认 SRC_DIR 自己就是一个 git 工作树。
 # 否则 git 会向上找到外层项目仓库,`git checkout -f` 会强制作废本项目的未提交改动。
 if [ "$DRY_RUN" -eq 0 ]; then
+  [ -d "$SRC_DIR/.git" ] || die "${SRC_DIR} 没有 .git —— 残缺的 checkout。
+  继续下去 git 会向上找到外层项目仓库并强制作废它的未提交改动。中止。"
   TOPLEVEL="$(git -C "$SRC_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
-  [ -n "$TOPLEVEL" ] || die "${SRC_DIR} 不是 git 工作树(残缺的 checkout?)。删掉它重跑 tools/10-fetch-chromium.sh。"
-  [ "$TOPLEVEL" = "$SRC_DIR" ] || die "${SRC_DIR} 的仓库根是 ${TOPLEVEL} —— 不是它自己。
+  [ -n "$TOPLEVEL" ] || die "${SRC_DIR} 不是 git 工作树。删掉它重跑 tools/10-fetch-chromium.sh。"
+  # 两边都归一化再比:直接比字符串在 Windows 上必然不等(见 norm() 注释)
+  if [ "$(norm "$TOPLEVEL")" != "$(norm "$SRC_DIR")" ]; then
+    die "${SRC_DIR} 的仓库根是 ${TOPLEVEL} —— 不是它自己。
   这说明 chromium/src 没建好,继续下去会误改外层仓库。中止。"
+  fi
 else
-  printf '  [dry-run] 会校验 %s 是自己的 git 工作树\n' "$SRC_DIR"
+  printf '  [dry-run] 会校验 %s 是自己的 git 工作树(路径先归一化再比)\n' "$SRC_DIR"
 fi
 
 if [ -z "$TARGET" ] && [ -f "$UPSTREAM_FILE" ]; then
@@ -115,7 +131,7 @@ PATCHES=("${PATCH_DIR}"/*.patch)
 shopt -u nullglob
 
 if [ "${#PATCHES[@]}" -eq 0 ]; then
-  warn "没有补丁可应用(补丁集尚未建立 —— 见 chromium/README.md §四)"
+  warn "没有补丁可应用(补丁集尚未建立 —— 见 chromium/README.md §五)"
 else
   for p in "${PATCHES[@]}"; do
     printf '  apply %s\n' "$(basename "$p")"
