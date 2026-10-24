@@ -48,7 +48,7 @@
 
 见 `docs/里程碑.md`(唯一正本)。当前:
 
-- **骨架** — 进行中
+- **骨架** — ✅ 已验收(双远端已推:GitHub `nakamotosai/ouuut-browser` private / Gitea `sai/ouuut-browser` private)
 - **M0 取证** — 进行中
 - M1 底座 / M2 harness / M3 档案引擎 / M4 通道 / M5 无头服务器 / M6 行为 / M7 分发 — 未开始
 
