@@ -60,8 +60,14 @@ Invoke-Native "winget install BuildTools (base)" {
 # The SDK component id is version-specific; if it is rejected we retry with only
 # the recommended set so the install still completes. Unverified until first
 # real run -- see chromium/README.md section 3.
-$overrideFull = "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows11SDK.26100 --includeRecommended"
-$overrideLite = "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+#
+# NOTE: Microsoft.VisualStudio.Component.VC.ATL is REQUIRED and is NOT part of
+# --includeRecommended for BuildTools. Chromium includes <atldef.h> from
+# base/win/atl_throw.h; without ATL the build dies at
+#   base/win/atl_throw.h(35,10): fatal error: 'atldef.h' file not found
+# Component ids verified against the local VS catalog (19354 packages).
+$overrideFull = "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows11SDK.26100 --add Microsoft.VisualStudio.Component.VC.ATL --includeRecommended"
+$overrideLite = "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.ATL --includeRecommended"
 
 Write-Host "  -> trying with pinned Windows 11 SDK component id"
 $fullOk = $true
