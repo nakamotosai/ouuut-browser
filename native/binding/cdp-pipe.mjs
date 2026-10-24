@@ -89,8 +89,13 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
   let nextId = 1;
   let closed = false;
   let exitInfo = null;
+  /** 诊断用:起至今多久、当初用的是哪串参数(报错时原样带上,省得再回去翻) */
+  const startedAt = Date.now();
+  const spawnArgs = [exe, ...args];
 
   const stderrChunks = [];
+  /** 子进程 stderr 的尾部 —— 报错时带上它对定位帮助极大(实测)。 */
+  const stderrText = () => Buffer.concat(stderrChunks).toString("utf8");
   child.stderr?.on("data", (c) => {
     stderrChunks.push(c);
     if (stderrChunks.length > 200) stderrChunks.shift(); // 只留尾部,避免长期运行吃内存
@@ -157,6 +162,38 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
     }
   });
 
+  /**
+   * 把"对端死了"翻译成**能直接读懂的诊断**。
+   *
+   * 起因(2026-10-25):`--remote-debugging-pipe` 让浏览器**启动阶段**就退 0 且
+   * **一个字都不输出**,而当时的报错只说 `ouuut 退出(code=0)` —— 从这句话里
+   * 推不出任何东西,白花了两小时才定位(见 `docs/坑与解法.md` 坑-29)。
+   *
+   * 现在把三种最容易误判的情形直接写进消息:
+   *   * 起后极快退出 + **零输出** → 大概率是某个开关不被支持(不是功能 bug)
+   *   * 极快退出 + 有输出 → 把输出带上(那通常就是原因)
+   *   * 跑了一会儿才退 → 是运行期崩了,不是启动失败
+   */
+  function diagnoseExit() {
+    if (!exitInfo) return `${name} 还没退出`;
+    const ms = Date.now() - startedAt;
+    const err = stderrText();
+    const parts = [`${name} 退出(code=${exitInfo.code} signal=${exitInfo.signal},存活 ${ms} ms)`];
+    if (ms < 2000 && err.trim() === "") {
+      parts.push(
+        "**在启动阶段就退出,且没有任何输出** —— 这通常意味着某个启动开关不被支持," +
+          "而不是功能问题。先用同样的开关去掉可疑项逐个试(见 docs/坑与解法.md 坑-29);" +
+          "也确认一下 --log-file 是否为空:空 = 没跑到 Chromium 的日志初始化",
+      );
+    } else if (err.trim() !== "") {
+      parts.push(`stderr(尾部):${err.trim().slice(-800)}`);
+    } else {
+      parts.push("运行期退出(不是启动失败)");
+    }
+    parts.push(`启动参数:${spawnArgs.join(" ")}`);
+    return parts.join("\n");
+  }
+
   child.on("error", (err) => {
     failAll(new CdpPipeError(`起 ${name} 失败:${err.message}`, { cause: err }));
   });
@@ -164,7 +201,7 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
     closed = true;
     exitInfo = { code, signal };
     failAll(
-      new CdpPipeError(`${name} 退出(code=${code} signal=${signal})—— 未完成的 CDP 请求全部作废`, {
+      new CdpPipeError(`${diagnoseExit()} —— 未完成的 CDP 请求全部作废`, {
         code: "OUUUT_CDP_PIPE_CLOSED",
       }),
     );
@@ -173,7 +210,7 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
   function send(method, params = {}, { timeoutMs: t = timeoutMs } = {}) {
     if (closed) {
       return Promise.reject(
-        new CdpPipeError(`${name} 已退出(code=${exitInfo?.code}),不能再发 ${method}`, {
+        new CdpPipeError(`${diagnoseExit()},不能再发 ${method}`, {
           code: "OUUUT_CDP_PIPE_CLOSED",
         }),
       );
@@ -203,7 +240,7 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
    *  这是 `--remote-debugging-pipe` 那条通路的本体。 */
   function sendRaw(obj) {
     if (closed) {
-      throw new CdpPipeError(`${name} 已退出(code=${exitInfo?.code}),不能再写`, {
+      throw new CdpPipeError(`${diagnoseExit()},不能再写`, {
         code: "OUUUT_CDP_PIPE_CLOSED",
       });
     }
@@ -214,6 +251,12 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
     child,
     send,
     sendRaw,
+    /** 诊断:对端退出时**能直接读懂**的说明(含启动参数与 stderr 尾部) */
+    diagnoseExit,
+    stderrText,
+    get exitInfo() {
+      return exitInfo;
+    },
     /** **原始订阅**:每一条解析出来的消息,包括 id 不在 pending 里的响应 */
     onRaw(fn) {
       rawListeners.add(fn);
@@ -226,9 +269,6 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
     },
     get closed() {
       return closed;
-    },
-    get stderrText() {
-      return Buffer.concat(stderrChunks).toString("utf8");
     },
     /** 干净收尾:先给一个**已 resolve 的拒绝理由**的窗口,再强杀。
      *  硬杀的进程会留下锁住的 chrome.dll —— 见 docs/坑与解法.md 坑-23。 */

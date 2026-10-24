@@ -136,3 +136,69 @@ test("分帧器:边界用例(空消息、连续分隔符、跨 chunk 的 UTF-8)"
   assert.deepEqual(got, ['{"a":1}', '{"b":"汉字"}']);
   assert.equal(s.end(), "");
 });
+
+// ---- 诊断:对端死了要能**直接读懂**(坑-29 的产物)---------------------------
+//
+// 起因:`--remote-debugging-pipe` 让浏览器启动阶段退 0 且零输出,
+// 而当时的报错只有 `退出(code=0)` —— 从这句话里推不出任何东西,白花两小时。
+// 下面两条就是守着"以后不用再花那两小时"。
+
+test("★ 诊断:对端**启动阶段**退 0 且零输出 → 报错要明说这一点", async (t) => {
+  const cdp = spawnCdpPipe({
+    exe: process.execPath,
+    args: ["-e", "process.exit(0)"],
+    name: "佯死对端",
+    timeoutMs: 2_000,
+  });
+  t.after(() => cdp.close().catch(() => {}));
+
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(cdp.closed, true, "对端应该已经退了");
+  assert.deepEqual(cdp.exitInfo, { code: 0, signal: null });
+
+  const d = cdp.diagnoseExit();
+  assert.match(d, /存活 \d+ ms/, "要带上活了多久 —— 这是区分『启动失败』与『运行期崩』的关键");
+  assert.match(d, /启动阶段/, "必须点明是启动阶段");
+  assert.match(d, /没有任何输出/, "必须点明零输出 —— 这正是『开关不被支持』的特征");
+  assert.match(d, /启动参数/, "要带上启动参数,省得再去翻代码");
+});
+
+test("★ 诊断:对端有 stderr → 把 stderr 带上(那通常就是原因)", async (t) => {
+  const cdp = spawnCdpPipe({
+    exe: process.execPath,
+    args: ["-e", "process.stderr.write('BOOM-原因在此\\n'); process.exit(3)"],
+    name: "带输出的对端",
+    timeoutMs: 2_000,
+  });
+  t.after(() => cdp.close().catch(() => {}));
+
+  await new Promise((r) => setTimeout(r, 500));
+  const d = cdp.diagnoseExit();
+  assert.match(d, /code=3/, "退出码要在");
+  assert.match(d, /BOOM-原因在此/, "stderr 必须在报错里 —— 否则还得自己去接");
+  assert.ok(!/没有任何输出/.test(d), "有输出时不该说『没有任何输出』");
+});
+
+test("★ 诊断:对端死了之后再发命令,报错也带诊断(而不是光一句『已退出』)", async (t) => {
+  const cdp = spawnCdpPipe({
+    exe: process.execPath,
+    args: ["-e", "process.exit(0)"],
+    name: "佯死对端",
+    timeoutMs: 2_000,
+  });
+  t.after(() => cdp.close().catch(() => {}));
+  await new Promise((r) => setTimeout(r, 500));
+
+  await assert.rejects(
+    () => cdp.send("Page.enable", {}),
+    (e) => {
+      assert.equal(e.error_code, "OUUUT_CDP_PIPE_CLOSED");
+      assert.match(e.message, /启动阶段/, "send 的报错也要能读懂");
+      return true;
+    },
+  );
+  assert.throws(
+    () => cdp.sendRaw({ id: 1, method: "Page.enable" }),
+    (e) => /启动阶段/.test(e.message),
+  );
+});
