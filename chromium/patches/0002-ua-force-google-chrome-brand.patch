@@ -1,0 +1,21 @@
+diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
+index e699a6a394..258001ebba 100644
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -162,10 +162,12 @@ const blink::UserAgentBrandList GetUserAgentBrandList(
+   int major_version_number;
+   bool parse_result = base::StringToInt(major_version, &major_version_number);
+   DCHECK(parse_result);
+-  std::optional<std::string> brand;
+-#if !BUILDFLAG(CHROMIUM_BRANDING)
+-  brand = version_info::GetProductName();
+-#endif
++  // ouuut: 无论是否 Chromium 品牌构建,都让 navigator.userAgentData.brands 里
++  // 出现 "Google Chrome"。检测方的基线就是 Chrome —— 纯 Chromium 只报
++  // [<greased>, Chromium],会被直接判成「不是 Chrome」。
++  // 注意:只改**品牌**。版本号仍取自 version_info::GetVersionNumber()(内核真版本);
++  // 伪造版本会与特性检测对不上(见 docs/决策记录.md ADR-006 细化)。
++  std::optional<std::string> brand{"Google Chrome"};
+ 
+   std::string brand_version =
+       output_version_type == blink::UserAgentBrandVersionType::kFullVersion

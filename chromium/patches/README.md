@@ -1,7 +1,18 @@
 # chromium/patches —— 自有补丁集
 
-> **现状:目录为空。** 补丁要在**第一次成功构建之后**才落位 ——
-> 先证明「能编出干净的基底」,再往上打补丁。顺序反了会分不清是补丁的毛病还是环境的毛病。
+> **现状:已有 2 个补丁**(2026-10-24),均已实测 `git apply --3way` 干净应用。
+> 点位依据见 `docs/补丁点位.md`(真相源 #12)。
+
+| 补丁 | 改什么 | 验收 |
+|---|---|---|
+| `0001-ua-remove-headless-token.patch` | 去掉 `GetUserAgentInternal()` 里往 UA 插的 `Headless` | `bot-detector` 的 `headless` 项转 🟢;**同时覆盖 Web Worker** |
+| `0002-ua-force-google-chrome-brand.patch` | `navigator.userAgentData.brands` 里强制出现 `Google Chrome` | `bot-detector` 的 `useragent` 项转 🟢 |
+
+两个补丁改的是**同一个文件**(`components/embedder_support/user_agent_utils.cc`),
+但 hunk 分别在 162 行与 215 行,**相隔 53 行、互不干扰** —— 已实测按顺序 `--3way` 应用成功。
+
+**为什么先于首次构建就写出来**:这两个点位是 M0 实测**精确定位**的(不是猜的),
+源码树已在本地,`git apply --check` 能立刻验证。早写早暴露补丁本身的问题。
 
 ---
 

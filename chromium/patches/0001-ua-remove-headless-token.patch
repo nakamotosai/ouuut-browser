@@ -1,0 +1,18 @@
+diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
+index e699a6a394..415dc86d52 100644
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -215,9 +215,10 @@ const blink::UserAgentBrandList GetUserAgentBrandFullVersionListInternal(
+ // depending on the Reduce User-Agent reduction phase features.
+ std::string GetUserAgentInternal() {
+   std::string product = GetProductAndVersion();
+-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(kHeadless)) {
+-    product.insert(0, "Headless");
+-  }
++  // ouuut: 不再往 UA 里插 "Headless"。
++  // 这一处同时覆盖主文档与 Web Worker —— worker 不走 CDP 的
++  // Emulation.setUserAgentOverride,驱动层够不到它,只有内核这一处能改到。
++  // 依据:docs/补丁点位.md §一、docs/M0-结论.md §1.3(creepjs 的 hasHeadlessWorkerUa)。
+ 
+ #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+   if (base::CommandLine::ForCurrentProcess()->HasSwitch(kUseMobileUserAgent)) {

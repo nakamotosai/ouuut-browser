@@ -24,6 +24,7 @@ UPSTREAM_FILE="${CHROMIUM_DIR}\\UPSTREAM"
 GCLIENT_FILE="${CHROMIUM_DIR}\\.gclient"
 
 log() { printf '\n\033[1;36m=== %s\033[0m\n' "$*"; }
+warn() { printf '\033[1;33m[warn] %s\033[0m\n' "$*" >&2; }
 die() { printf '\033[1;31m[fatal] %s\033[0m\n' "$*" >&2; exit 1; }
 
 # 路径归一化:Windows 的 Git Bash 下 `pwd` 给 `/f/...`、`git` 给 `F:/...`,
@@ -33,27 +34,42 @@ norm() { ( cd "$1" 2>/dev/null && pwd -P ); }
 # ---- 让 GitHub 出身的依赖走 GitHub,别去挤 googlesource ----
 #
 # 实测(2026-10-24):`gclient sync` 中途被 **HTTP 429** 打断 ——
-#   `chromium.googlesource.com` 的 **匿名共享配额**按 IP 限流,
-#   报 `Short term server-time rate limit exceeded`。而单个 `git ls-remote` 秒回,
-#   说明是「批量克隆把它打爆」,不是不通。
+#   `chromium.googlesource.com` 的**匿名共享配额按 IP 限流**。
+#   而 `external/github.com/<org>/<repo>` 这类路径本来就是从 GitHub 镜像过去的,
+#   重写回 GitHub 既快(实测 7 MB/s)也不吃 Google 配额。
 #
-# `external/github.com/<org>/<repo>` 这类路径本来就是从 GitHub 镜像过去的,
-# 重写回 GitHub 既快(实测 7 MB/s)也不受 Google 配额限制。
-# 用 `--global` 是因为 gclient 的子进程只认全局配置。
-configure_git_mirrors() {
-  local rules=(
-    "https://github.com/|https://chromium.googlesource.com/external/github.com/"
-    "https://github.com/webmproject/|https://chromium.googlesource.com/webm/"
-    "https://github.com/|https://chromium.googlesource.com/v8/"
-  )
-  local r from to have
-  for r in "${rules[@]}"; do
+# **用 `GIT_CONFIG_*` 环境变量,而不是 `git config --global`**:
+#   - 只对本次 gclient 及其 git 子进程生效,**不污染用户的全局 gitconfig**
+#   - **不会留下旧规则**:写成 `--global` 的话,规则改一版就残留一版
+#     (实测踩过:`.../v8/` -> `github.com/` 那条错规则留在了全局配置里,
+#      导致 v8 被映射成不存在的 `github.com/v8.git`)
+#   - 作者/CI 拿到脚本就能复现,不需要先跑一遍「配置命令」
+#
+# ⚠️ `insteadOf` 用**最长前缀匹配**,所以针对性规则是安全的;
+#    **别**写 `.../ -> github.com/` 这种泛规则(会把 `chromium/src.git` 也改坏)。
+# ⚠️ `external/github.com/<org>/<repo>` **不一定**是 1:1 的 GitHub 仓库 ——
+#    有的指向**子目录**(如 `SeleniumHQ/selenium/py`、`llvm/llvm-project/clang/tools/clang-format`)。
+#    那些要靠 `.gclient` 的 `custom_deps` 跳过,否则一个 dep 失败会**整个 sync 退出**。
+MIRROR_RULES=(
+  "https://github.com/|https://chromium.googlesource.com/external/github.com/"
+  "https://github.com/webmproject/|https://chromium.googlesource.com/webm/"
+  # v8 这条**必须**带 org:仓库是 `v8/v8`,`.../v8/` 直接映射到 `github.com/`
+  # 会得到 `github.com/v8.git`(不存在)。实测踩过。
+  "https://github.com/v8/|https://chromium.googlesource.com/v8/"
+)
+
+export_git_mirror_env() {
+  local i=0 r to from
+  for r in "${MIRROR_RULES[@]}"; do
     to="${r%%|*}"; from="${r##*|}"
-    have="$(git config --global --get "url.${to}.insteadOf" 2>/dev/null || true)"
-    if [ "$have" != "$from" ]; then
-      git config --global --add "url.${to}.insteadOf" "$from"
-      echo "  git 镜像重写:+ ${from} -> ${to}"
-    fi
+    export "GIT_CONFIG_KEY_${i}=url.${to}.insteadOf"
+    export "GIT_CONFIG_VALUE_${i}=${from}"
+    i=$((i + 1))
+  done
+  export GIT_CONFIG_COUNT="$i"
+  log "  已注入 ${i} 条镜像重写(仅本次进程,不动全局配置)"
+  for r in "${MIRROR_RULES[@]}"; do
+    printf '    %s -> %s\n' "${r##*|}" "${r%%|*}"
   done
 }
 
@@ -158,11 +174,14 @@ solutions = [
     "url": "https://github.com/chromium/chromium.git",
     "managed": False,
     "custom_deps": {
-      # ★ 跳过:该 dep 的 googlesource 路径是 `external/github.com/SeleniumHQ/selenium/py`
-      #   —— 一个 GitHub 仓库的**子目录**,不是 1:1 的仓库,
-      #   所以「external/github.com/ → github.com/」的镜像重写会把它改成不存在的 URL。
-      #   构建 Chrome 不需要它(那是 WebDriver 的 python 绑定)。
+      # ★ 跳过:这些 dep 的 googlesource 路径指向 **GitHub 仓库的子目录**,
+      #   不是 1:1 的仓库,所以「external/github.com/ → github.com/」的镜像重写
+      #   会它们改成不存在的 URL,而 gclient 会因为一个 dep 失败**整个 sync 退出**。
+      #   它们都不是构建 Chrome 所必需的。
+      #   - SeleniumHQ/selenium/**py** —— WebDriver 的 python 绑定
+      #   - llvm/llvm-project/**clang/tools/clang-format** —— 只是代码格式化工具
       "src/third_party/webdriver/pylib": None,
+      "src/third_party/webpagereplay/third_party/clang-format": None,
     },
     "custom_vars": {
       # PGO profile 约 1 GB,而我们的 gn args 里 chrome_pgo_phase=0,用不上
@@ -197,15 +216,15 @@ else
   log "  (跳过克隆;SRC_DIR 已存在且校验通过)"
 fi
 
-log "3/4 配置 git 镜像重写"
-configure_git_mirrors
+log "3/4 注入 git 镜像重写(仅本进程)"
+export_git_mirror_env
 
 log "4/4 gclient sync(拉依赖,约 50 GB;上游按 IP 限流,带重试)"
 cd "$CHROMIUM_DIR"
 sync_with_retry || die "gclient sync 连续多次失败 —— 多半是上游 429 限流未缓解。
   可以:① 稍后重跑本脚本(gclient sync 幂等,已拉好的会跳过);
         ② 换出口 IP 再跑(限流是按 IP 的);
-        ③ 用更小的并发:GCLIENT_SYNC_ATTEMPTS=8 重跑。"
+        ③ 加大重试次数:GCLIENT_SYNC_ATTEMPTS=8 重跑。"
 
 log "完成"
 echo "源码:${SRC_DIR}"
