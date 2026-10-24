@@ -78,6 +78,13 @@ if [ "$DRY_RUN" -eq 0 ]; then
     die "${SRC_DIR} 的仓库根是 ${TOPLEVEL} —— 不是它自己。
   这说明 chromium/src 没建好,继续下去会误改外层仓库。中止。"
   fi
+  # `pwd -P` 会把 junction / symlink 折叠成物理路径,于是「src 是指向本项目根的别名」
+  # 这种情况会让上面那条相等判断**误判为通过**。所以再断言一次:解析结果不能是本项目根。
+  if [ "$(norm "$TOPLEVEL")" = "$(norm "$REPO_ROOT")" ]; then
+    die "${SRC_DIR} 解析到本项目仓库根 ${REPO_ROOT} —— 多半是个 junction/symlink 别名。
+  继续下去 git 的 fetch/checkout 会在**本项目仓库**里执行、作废未提交改动。中止。
+  请把 chromium/src 换成真实的 chromium/src 克隆(见 tools/10-fetch-chromium.sh)。"
+  fi
 else
   printf '  [dry-run] 会校验 %s 是自己的 git 工作树(路径先归一化再比)\n' "$SRC_DIR"
 fi
