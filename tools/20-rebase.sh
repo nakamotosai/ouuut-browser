@@ -143,16 +143,29 @@ if [ "$DRY_RUN" -eq 0 ]; then
   # 那意味着白烧几分钟到几十分钟。这里提前 3 秒查出来,并给出可直接照做的清理命令。
   if [ -f "${OUT_DIR}/chrome.dll" ]; then
     LOCK_PROBE="$(powershell -NoProfile -Command "
-      try { \$fs = [System.IO.File]::Open('$(winpath "${OUT_DIR}\\chrome.dll")', 'Open', 'ReadWrite', 'None'); \$fs.Close(); '' }
+      try { \$fs = [System.IO.File]::Open('$(winpath "${OUT_DIR}\\chrome.dll")', 'Open', 'ReadWrite', 'None'); \$fs.Close(); 'OK' }
       catch { 'LOCKED' }" 2>/dev/null | tr -d '\r\n')"
-    if [ "$LOCK_PROBE" = "LOCKED" ]; then
-      die "产物 chrome.dll 被占用(有实例还在跑),链接阶段必然失败。先清掉**本项目的**产物实例:
+    # ⚠️ **fail-closed**:探测自己跑不起来时(找不到 powershell / 被策略拦住),
+    # 绝不能默认「没锁」—— 原实现只判断 `= "LOCKED"`,
+    # 于是探测失败会打印一个**假的 ✅**(核验报告 2026-10-24 用 `PATH=/usr/bin` 复现)。
+    # 这正是「看起来在验、其实取不到值」的老毛病,见 docs/坑与解法.md 坑-24 的教训。
+    case "$LOCK_PROBE" in
+      OK)
+        printf '  产物锁:chrome.dll 可独占打开 ✅\n'
+        ;;
+      LOCKED)
+        die "产物 chrome.dll 被占用(有实例还在跑),链接阶段必然失败。先清掉**本项目的**产物实例:
     powershell -NoProfile -Command \"Get-Process chrome -ErrorAction SilentlyContinue |
       Where-Object { \\\$_.Path -like '*ouuut-browser*out\\Release*' } | Stop-Process -Force\"
   然后再跑本脚本。
-  (别去杀用户自己的 Chrome / omp 的 puppeteer —— 上面那条只匹配本项目 out/Release 下的。) "
-    fi
-    printf '  产物锁:chrome.dll 可独占打开 ✅\n'
+  (别去杀用户自己的 Chrome / omp 的 puppeteer —— 上面那条只匹配本项目 out/Release 下的。)"
+        ;;
+      *)
+        die "产物锁探测**没有产出结果**(拿到 '${LOCK_PROBE}')—— 无法确认 chrome.dll 未被占用。
+  若继续,链接阶段很可能因 'lld-link: failed to write output ... permission denied' 白烧一整轮构建
+  (见 docs/坑与解法.md 坑-23)。先查明 powershell 为何不可用,再重跑。中止。"
+        ;;
+    esac
   fi
 else
   printf '  [dry-run] 会校验 %s 是自己的 git 工作树(路径先归一化再比)\n' "$SRC_DIR"
@@ -210,7 +223,9 @@ else
     git fetch --depth 1 origin \
       "refs/tags/${CHROMIUM_REF}:refs/tags/${CHROMIUM_REF}" \
       || die "拉不到 tag ${CHROMIUM_REF}。
-  确认该 tag 存在于 chromium.googlesource.com/chromium/src。
+  本仓库的源是 remote.origin.url —— 本项目配的是 **GitHub 镜像**
+  (https://github.com/chromium/chromium.git),**不是** chromium.googlesource.com;
+  照 googlesource 去查会查错方向(见 chromium/.gclient 的 url 字段)。
   若这个版本只有 commit、没有 tag,请直接把 commit SHA 作为参数传入(rebase 会按 sha 处理)。"
     TARGET_SHA="$(git rev-parse "refs/tags/${CHROMIUM_REF}")"
   fi
@@ -220,7 +235,7 @@ else
       printf '  commit %s 已在本地 → 无需下载\n' "${TARGET_SHA:0:10}"
     else
       git fetch --depth 1 origin "$TARGET_SHA" \
-        || die "拉不到 commit ${TARGET_SHA}(注意本仓库是**浅克隆**,需要能访问 chromium.googlesource.com)"
+        || die "拉不到 commit ${TARGET_SHA}(注意本仓库是**浅克隆**,需要能访问 remote.origin.url —— 本项目是 GitHub 镜像)"
     fi
   fi
 
@@ -268,7 +283,11 @@ fi
 
 # ---- 4/7 gn gen ------------------------------------------------------------
 log "4/7 gn gen out/Release"
-mkdir -p "$(dirname "$OUT_DIR")"
+# ⚠️ 这里**不能**有裸 `mkdir` —— `--dry-run` 必须一个字节都不落。
+# (核验报告 2026-10-24 复现:原实现在这个位置有 `mkdir -p "$(dirname "$OUT_DIR")"`,
+#  它在 DRY_RUN 分支**之外**,于是 dry-run 会真的建出 `chromium/src/out/`,
+#  与脚本开头「只打印动作,不落地」和结尾「未落地任何改动」自相矛盾。)
+# 真正的 `mkdir -p "$OUT_DIR"` 在下面的 else 分支里。
 # 写成 args.gn 文件再 `gn gen out/Release`,而不是 `--args="..."` ——
 # 少一层转义、可读、且与 `gn args` 的用法一致。
 # 说明:工具链**不在这里指定** —— 走 Chromium 自己的自动探测,只需上面那两个环境变量。
@@ -329,16 +348,25 @@ if [ "$DRY_RUN" -eq 0 ]; then
   # **真正的断言**(以前这里只是个打印,等于没验):产物版本必须与目标一致。
   case "$VER_INFO" in
     *"$CHROMIUM_REF"*) printf '  ✅ 版本与目标一致(%s)\n' "$CHROMIUM_REF" ;;
-    "")  warn "读不到 PE 版本资源 —— 无法核对版本(产物文件仍在)。" ;;
+    "")
+      # fail-closed:读不到版本 = **无法核对**,不能只告警。
+      # (原实现只 warn,于是 UPSTREAM 会落下空的 `smoke=` —— 正是坑-24 记录的那个症状。
+      #  核验报告 2026-10-24 指出:那一刻检查既没产出可核对证据、也不会失败。)
+      die "读不到 chrome.dll 的 PE 版本资源 —— **无法核对产物版本**,不能当作 ${TARGET} 的产物。
+  常见原因:powershell 不在 PATH / 被策略拦住 / 产物不是有效的 PE。
+  先手工验证一次:
+      powershell -NoProfile -Command \"(Get-Item '$(winpath "$DLL_BIN")').VersionInfo.FileVersion\"
+  中止。" ;;
     *)   die "产物版本与目标不符:产物=${VER_INFO} 目标=${CHROMIUM_REF}
   → 这次构建出来的**不是**你要的版本,绝不能当成 ${TARGET} 的产物发出去。" ;;
   esac
 
-  # 体积守卫:chrome.dll 装了绝大部分代码,明显偏小说明构建不完整
+  # 体积守卫:chrome.dll 装了绝大部分代码、chrome.exe 是启动器 —— 两个都守
   DLL_MB=$(( $(wc -c < "$DLL_BIN") / 1048576 ))
   EXE_MB=$(( $(wc -c < "$CHROME_BIN") / 1048576 ))
   printf '  chrome.dll = %s MB · chrome.exe = %s MB\n' "$DLL_MB" "$EXE_MB"
   [ "$DLL_MB" -gt 100 ] || die "chrome.dll 只有 ${DLL_MB} MB —— 构建不完整(预期 >100 MB)"
+  [ "$EXE_MB" -gt 1 ]   || die "chrome.exe 只有 ${EXE_MB} MB —— 启动器不完整(预期 >1 MB)"
 
   VER_OUT="$VER_INFO"
 else

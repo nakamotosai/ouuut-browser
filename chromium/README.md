@@ -130,15 +130,25 @@ tools/20-rebase.sh --dry-run          # 只打印将要执行的动作,不落地
 - [ ] **`.gclient` 手写模板可用** —— `10-fetch-chromium.sh` 没有走 `fetch chromium`,
       而是自己写了 `.gclient`(内容与 `fetch chromium` 生成的一致),让源码落在
       `chromium/src` 而不是 `chromium/chromium/src`。**这一点没人验证过**
-- [ ] **blobless partial clone 能满足 `git apply --3way`** —— 脚本刻意不用 `--depth=1`
-      (浅克隆下补丁的基对象可能不在本地),但 blobless 克隆下 `--3way` 是否会触发
-      联网补 blob、会不会卡住,**未验证**
-- [ ] **`gclient sync --with_branch_heads --with_tags` 之后 `git HEAD` 是否仍是目标版本** ——
-      `gclient sync` 自己可能改变 checkout
+- [x] ~~**blobless partial clone 能满足 `git apply --3way`**~~
+      —— **前提已不成立,本条作废(2026-10-24)**:脚本实际用的是
+      `git clone --branch <tag> --depth=1` 且**不带任何 `--filter`**(见
+      `tools/10-fetch-chromium.sh`),所以该 commit 的 blob 全在本地、`--3way` 的基对象必然可用。
+      实测:补丁以 `Applied patch to 'components/embedder_support/user_agent_utils.cc' cleanly.` 干净落地,无联网补 blob
+      (见 `docs/坑与解法.md` 坑-22:浅克隆 + `--with_tags` 才是真陷阱,但那是 fetch 的问题,不是 clone 的)
+- [x] ~~**`gclient sync --with_branch_heads --with_tags` 之后 `git HEAD` 是否仍是目标版本**~~
+      —— **已解决(2026-10-24)**:那两个 flag **已被删除**(见 `docs/坑与解法.md` 坑-22),
+      它们正是浅克隆下 `git fetch` 退化成「拉 29,397,996 个对象」的元凶。
+      实测:裸 `gclient sync` 之后 `HEAD` **仍是** `1d17a2e2ee…`(= 目标 tag),checkout 未被改动
+      (根因:`chromium/.gclient` 里 src 是 `"managed": False`,`gclient` 不碰它的 git 状态)
 - [ ] **`gn args` 的完整清单** —— 是否该用 `is_official_build=true`;
       `symbol_level` 取值对构建时间与产物体积的影响
-- [ ] **`chrome.exe --version` 在 Windows 上的行为** —— 若它是无输出的 GUI no-op,
-      那么第 6 步的「冒烟」证明不了任何事,需要换成 `--dump-dom` 或其它可观测判据
+- [x] ~~**`chrome.exe --version` 在 Windows 上的行为**~~
+      —— **已解决(2026-10-24)**:它确实是**无输出的 GUI no-op**(实测 `rc=0`、输出长度 **0**、
+      `stdout` 空 —— GUI 子系统二进制没有附着的控制台)。
+      所以第 6 步的冒烟已**改为读 PE 版本资源**并做**真断言**
+      (`(Get-Item <chrome.dll>).VersionInfo.FileVersion`,实测给出 `156.0.8078.47`,与目标 tag 一致)。
+      见 `docs/坑与解法.md` 坑-24
 - [ ] **ungoogled-chromium 补丁集的取用方式** —— 是 clone 其仓库后跑 `utils/patches.py`,
       还是直接 `git apply patches/**`?本项目的 `chromium/patches/` 只放**我们自己的**补丁;
       上游补丁集怎么接进来,**尚未决定**(留到首次构建成功后处理)

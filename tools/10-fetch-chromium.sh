@@ -100,7 +100,17 @@ sync_with_retry() {
   local attempts="${GCLIENT_SYNC_ATTEMPTS:-5}" i delay=60
   for i in $(seq 1 "$attempts"); do
     log "  第 ${i}/${attempts} 次 gclient sync(每次失败后退避 ${delay}s)"
-    if "$GCLIENT" sync --with_branch_heads --with_tags; then
+    # ⚠️ **绝不要**加 `--with_branch_heads` / `--with_tags`(2026-10-24 实测踩到):
+    #   gclient 的 `_SetFetchConfig()`(见 depot_tools/gclient_scm.py)只在这两个 flag
+    #   被传时才把下面两条写进 `src/.git/config`:
+    #     +refs/branch-heads/*:refs/remotes/branch-heads/*
+    #     +refs/tags/*:refs/tags/*
+    #   而本仓库是 **`--depth 1` 浅克隆**(上面 `git clone --depth=1`)。
+    #   两者叠加 ⇒ 之后**任何不带 `--depth` 的 `git fetch`** 都会退化成
+    #   「补齐整棵 chromium 历史」—— 实测要 **29,397,996 个对象**。
+    #   (这条 refspec 就是这么被灌进去的,不是克隆自带的;对照实验见 docs/坑与解法.md 坑-22。)
+    #   我们只需要目标那一个 tag,克隆时已经拿到了,这里**没有任何理由**去碰 tag/branch-heads。
+    if "$GCLIENT" sync; then
       return 0
     fi
     if [ "$i" -lt "$attempts" ]; then
