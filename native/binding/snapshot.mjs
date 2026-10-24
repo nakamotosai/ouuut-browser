@@ -22,10 +22,17 @@
 //
 // ## 这一刀**没做**的(不掩饰)
 //
-//   * `ref` / `loc=` 选择器编号:需要跨 frame 唯一编号与"同一性"校验(§4.5),
-//     属 is 独立一片
-//   * 文本化简的完整规则(§4.1 说在内核侧做)
+//   * `ref` / `loc=` 选择器**编号**(§4.5):需要跨 frame 唯一编号与"同一性"校验。
+//     —— **join 点已经就位**:`snapshot-simplify.mjs` 的 `validateLocator()` 实现了
+//     §4.4 的唯一性/同一性判定(0 个、多个、唯一但不同节点 → 一律省略 locator,
+//     绝不打 `loc=unstable` 这类状态串),`simplifyTree` 也已经把 `refId` 当作
+//     "必须保留的 container"的判据。缺的只是**分配** refId 那一步(§4.2 的跨 renderer 编号)
 //   * `maxResultLength` 目前的实现是**截断**,不是"按重要性选择要保留哪些节点"
+//   * §4.2 的跨 renderer `refId` 分配(iframe 里的可操作节点)未做
+//
+// §4.1 的**文本化简已做**,在 `snapshot-simplify.mjs`(独立、纯粹、可脱离 CDP 测)
+
+import { normalizeAxNodes, simplifyTree, renderSimplified } from "./snapshot-simplify.mjs";
 
 const MAX_DEFAULT = 20_000;
 
@@ -104,49 +111,19 @@ export function buildHeader({ label, title, space, tabs = [] }) {
 export function renderAxTree(nodes, { maxLength = MAX_DEFAULT, maxDepth = 64 } = {}) {
   if (!Array.isArray(nodes) || nodes.length === 0) return "";
 
-  const byId = new Map();
-  for (const n of nodes) if (n?.nodeId) byId.set(n.nodeId, n);
+  // 三段式:`规范形状 → §4.1 化简 → 缩进渲染`。
+  // 以前这里是一趟自带"跳过空叶子"逻辑的遍历 —— 那等于把 §4.1 的规则
+  // **隐式**写在渲染里,既测不了也改不动。现在规则集中在 `snapshot-simplify.mjs`,
+  // 本函数只剩"接线"。
+  const { root } = normalizeAxNodes(nodes, roleToToken);
+  if (!root) return "";
+  const simplified = simplifyTree(root);
+  if (!simplified) return "";
 
-  // `getFullAXTree` 一般是先根后子的扁平序;但仍以 childIds 为准重新走一遍,
-  // 这样即使顺序变了也不受影响。
-  const childIdsOf = (n) => (Array.isArray(n?.childIds) ? n.childIds : []);
-  const root = nodes.find((n) => !nodes.some((m) => childIdsOf(m).includes(n.nodeId))) ?? nodes[0];
-
-  const lines = [];
-  const seen = new Set();
-  let truncated = false;
-
-  const walk = (node, depth) => {
-    if (truncated || !node || seen.has(node.nodeId)) return;
-    seen.add(node.nodeId);
-
-    const role = roleToToken(node.role?.value);
-    // AX 树里有大量无意义的中间节点,但对齐格式比"聪明地省略"更重要 ——
-    // 上游要求**绝不删非空页面文本**,所以这里只跳过完全空且无子节点的叶子。
-    const name = typeof node.name?.value === "string" ? node.name.value : "";
-    const kids = childIdsOf(node);
-    if (node.ignored && kids.length === 0) return;
-    if (!name && kids.length === 0 && role !== "root") return;
-
-    const indent = "  ".repeat(depth + 1);
-    // `text` 角色是页面原文的载体 —— 原样带引号输出
-    const line = name ? `${indent}${role} ${JSON.stringify(name)}` : `${indent}${role}`;
-    lines.push(line);
-
-    if (lines.join("\n").length > maxLength) {
-      truncated = true;
-      return;
-    }
-    if (depth + 1 < maxDepth) {
-      for (const cid of kids) walk(byId.get(cid), depth + 1);
-    }
-  };
-
-  walk(root, -1); // root 本身在 depth -1 → 它渲染成 0 缩进
-  let text = lines.join("\n");
-  if (truncated || text.length > maxLength) {
+  let text = renderSimplified(simplified, { maxDepth });
+  if (text.length > maxLength) {
     // **明说被截断了** —— 静默截断会让 agent 以为自己看到了全貌
-    text = text.slice(0, maxLength) + "\n…(快照被 maxResultLength 截断)";
+    text = text.slice(0, maxLength) + "\n...(快照被 maxResultLength 截断)";
   }
   return text;
 }

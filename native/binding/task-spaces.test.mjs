@@ -193,7 +193,11 @@ test("快照格式:首行是空间/页面头,主体是角色树 + text \"原文\
 
   assert.match(lines[0], /^\[p\d+ ".*" \| space "ouuut-m2-smoke"\(\d+\):/, "首行要是空间/页面头");
   assert.deepEqual(lines.slice(1), [
-    "root \"Example Domain\"",
+    // **裸 `root`,不带名字** —— 这是 ego 的实测格式(`docs/原生层接口.md` §4.3),
+    // 不是我们的选择:root 的 AX 名字就是文档标题,而标题已在首行头里,再打一次是重复。
+    // (本行原先钉的是 `root "Example Domain"` —— 那是接线前我们自己渲染器的偶然行为,
+    //  与实测格式不符,已按实测改正。)
+    "root",
     "  paragraph",
     "    text \"该域名仅用于文档示例。\"",
     "  paragraph",
