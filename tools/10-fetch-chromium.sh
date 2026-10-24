@@ -146,24 +146,32 @@ else
   NEED_CLONE=1
 fi
 
-# ---- .gclient(内容与 fetch chromium 生成的一致)------------------------------
+# ---- .gclient(内容与 fetch chromium 生成的一致,外加两处必要调整)----------
 log "1/4 写 .gclient"
-if [ -e "$GCLIENT_FILE" ]; then
-  log "  .gclient 已存在,保留原样"
-else
-  cat > "$GCLIENT_FILE" <<'EOF'
+cat > "$GCLIENT_FILE" <<'EOF'
+# 本文件由 tools/10-fetch-chromium.sh 生成 —— 手工改会被下次运行覆盖。
 solutions = [
   {
     "name": "src",
-    "url": "https://chromium.googlesource.com/chromium/src.git",
+    # 与 tools/10-fetch-chromium.sh 的 SRC_URL 保持一致(默认 GitHub 镜像)。
+    # 指向 googlesource 会在批量拉取时被按 IP 限流(429)。
+    "url": "https://github.com/chromium/chromium.git",
     "managed": False,
-    "custom_deps": {},
-    "custom_vars": {},
+    "custom_deps": {
+      # ★ 跳过:该 dep 的 googlesource 路径是 `external/github.com/SeleniumHQ/selenium/py`
+      #   —— 一个 GitHub 仓库的**子目录**,不是 1:1 的仓库,
+      #   所以「external/github.com/ → github.com/」的镜像重写会把它改成不存在的 URL。
+      #   构建 Chrome 不需要它(那是 WebDriver 的 python 绑定)。
+      "src/third_party/webdriver/pylib": None,
+    },
+    "custom_vars": {
+      # PGO profile 约 1 GB,而我们的 gn args 里 chrome_pgo_phase=0,用不上
+      "checkout_pgo_profiles": False,
+    },
   },
 ]
 EOF
-  echo "  wrote $GCLIENT_FILE"
-fi
+echo "  wrote $GCLIENT_FILE"
 
 # ---- clone ------------------------------------------------------------------
 log "2/4 git clone chromium/src"

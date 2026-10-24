@@ -268,5 +268,19 @@
     "src/third_party/webpagereplay/buildtools/linux64-format": [
       "79a7b4e5336339c17b828de10d80611ff0f85961"
     ]
+  },
+  "src/third_party/openscreen/src/buildtools": {
+    "src/third_party/openscreen/src/buildtools/win-format": [
+      "fb0bcaf406ad6f0bd6b4a6347d2abe78a94fb13e"
+    ],
+    "src/third_party/openscreen/src/buildtools/mac-format": [
+      "35ddc571ab654a4f58d7b35f394b04835d0b98f9"
+    ],
+    "src/third_party/openscreen/src/buildtools/mac_arm64-format": [
+      "945e45cbcb5443c3e569d5e0783fd012154fc4a7"
+    ],
+    "src/third_party/openscreen/src/buildtools/linux64-format": [
+      "f5485c39451137ee943021a0fb63738b306c5026"
+    ]
   }
 }
