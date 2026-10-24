@@ -41,15 +41,19 @@
 def launch(spec: LaunchSpec) -> Iterator[BrowserFacade]   # 上下文管理器
 ```
 
-`LaunchSpec`:`profile_dir`(每 target × 每 egress 一个干净档案)/ `proxy` / `headless`。
+`LaunchSpec` 的字段(**以 `probe/base.py` 为准**):
+`target` / `egress`(出口对象,代理在 `egress.proxy` 上)/ `profile_dir`(每 target × 每 egress
+一个干净档案)/ `out_dir` / `headless` / `timeout_ms`。
 
-| 代号 | 被测对象 | 为什么在矩阵里 |
-|---|---|---|
-| `pw-naive` | 裸 Playwright(chromium) | **基线**:发 `Runtime.enable`、留全部 CDP 痕迹 |
-| `patchright` | patchright(rebrowser 补丁的 Python 版) | **核心对照**:按住 `Runtime.enable` 的公开修法 |
-| `cloak` | CloakBrowser | 商业反检测对照 |
-| `ego` | ego lite | 「进程内通道 + 不发 `Runtime.enable`」的实证(REA B1/B2) |
-| `ouuut` | 我方(将来) | M2 之后接入 |
+| 代号 | 被测对象 | 为什么在矩阵里 | 状态 |
+|---|---|---|---|
+| `pw-naive` | 裸 Playwright(chromium) | **基线**:发 `Runtime.enable`、留全部 CDP 痕迹 | ✅ |
+| `patchright` | patchright(rebrowser 补丁的 Python 版) | **核心对照**:只修协议层 | ✅ |
+| `pw-hardened` | 裸 Playwright + 修好的启动参数 | **核心对照**:只修参数层(与上面**正交**) | ✅ |
+| `patchright-hardened` | 上面两者叠加 | **决定性格**:不写内核代码能走多远 | ✅ |
+| `cloak` | CloakBrowser | 商业反检测对照(含内核补丁) | ✅ |
+| `ego` | ego lite | 「进程内通道 + 不发 `Runtime.enable`」的实证(REA B1/B2) | ✅ |
+| `ouuut` | 我方 | 自有内核**尚未建成**,M1 之后接入 | ❌ 未实现 |
 
 ### 3.2 检测站(site)
 
@@ -70,7 +74,7 @@ class Site:
 | `bot-detector` | `bot-detector.rebrowser.net` | **最直接**:CDP 泄漏项逐条 |
 | `creepjs` | `abrahamjuliot.github.io/creepjs` | 指纹一致性(trust score) |
 | `browserleaks` | `browserleaks.com` | WebRTC / Canvas / WebGL / 字体 |
-| `turnstile` | Cloudflare Turnstile demo | 实战门槛(能不能过) |
+| `turnstile` | Cloudflare Turnstile demo | 实战门槛(能不能过)。❌ **未实现** —— 需交互式点击;`nopecha.com/demo/cloudflare` 直连 403 |
 
 ### 3.3 产物
 

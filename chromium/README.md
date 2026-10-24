@@ -53,19 +53,50 @@ tools/20-rebase.sh 157.0.8103.15-1    # 或换到指定版本
 tools/20-rebase.sh --dry-run          # 只打印将要执行的动作,不落地
 ```
 
-它按顺序做:
-1. 记下当前 `chromium/UPSTREAM`
-2. `gclient sync` 到目标版本
-3. 依次 `git apply --3way` 应用 `chromium/patches/*.patch`(**按文件名排序**)
-4. `gn gen out/Release`
-5. `autoninja -C out/Release chrome`
-6. 写新的 `chromium/UPSTREAM`(版本 + commit SHA + 补丁清单哈希 + 产物 sha256)
+它按顺序做(共 7 个阶段):
+
+| 阶段 | 做什么 |
+|---|---|
+| 1/7 | 前置检查(**含「`chromium/src` 必须是自己一个 git 工作树」的守卫** —— 否则 `git checkout -f` 会误改本项目工作区) |
+| 2/7 | `gclient sync` 到目标版本(tag 与 commit SHA 两种输入分别处理) |
+| 3/7 | 依次 `git apply --3way` 应用 `chromium/patches/*.patch`(**按文件名排序**) |
+| 4/7 | `gn gen out/Release` |
+| 5/7 | `autoninja -C out/Release chrome` |
+| 6/7 | **冒烟**:启动产物取版本 |
+| 7/7 | 写 `chromium/UPSTREAM`(**原子替换**;冒烟不过就不写,免得留下假锚) |
 
 **补丁失败即中止**,并打印冲突文件 —— 不静默跳过。
 
 ---
 
-## 三、版本策略(ADR-006)
+## 三、尚未验证的前提(第一次实跑前必读)
+
+脚本是照 Chromium / ungoogled-chromium 的公开流程写的,但**本机没有工具链,一行都没真跑过**。
+以下每一条都可能需要现场调整:
+
+- [ ] `winget` 的 VS Build Tools 包 ID 与工作负载 / SDK 组件 ID 在当前版本上有效
+- [ ] **`.gclient` 手写模板可用** —— `10-fetch-chromium.sh` 没有走 `fetch chromium`,
+      而是自己写了 `.gclient`(内容与 `fetch chromium` 生成的一致),让源码落在
+      `chromium/src` 而不是 `chromium/chromium/src`。**这一点没人验证过**
+- [ ] **blobless partial clone 能满足 `git apply --3way`** —— 脚本刻意不用 `--depth=1`
+      (浅克隆下补丁的基对象可能不在本地),但 blobless 克隆下 `--3way` 是否会触发
+      联网补 blob、会不会卡住,**未验证**
+- [ ] **`gclient sync --with_branch_heads --with_tags` 之后 `git HEAD` 是否仍是目标版本** ——
+      `gclient sync` 自己可能改变 checkout
+- [ ] **`gn args` 的完整清单** —— 是否该用 `is_official_build=true`;
+      `symbol_level` 取值对构建时间与产物体积的影响
+- [ ] **`chrome.exe --version` 在 Windows 上的行为** —— 若它是无输出的 GUI no-op,
+      那么第 6 步的「冒烟」证明不了任何事,需要换成 `--dump-dom` 或其它可观测判据
+- [ ] **ungoogled-chromium 补丁集的取用方式** —— 是 clone 其仓库后跑 `utils/patches.py`,
+      还是直接 `git apply patches/**`?本项目的 `chromium/patches/` 只放**我们自己的**补丁;
+      上游补丁集怎么接进来,**尚未决定**(留到首次构建成功后处理)
+- [ ] **首次构建的实际耗时与磁盘峰值**
+
+**头一次跑通后,把上面的勾全部打上,并确认 `chromium/UPSTREAM` 有实测值** —— 那才算 M1 验收。
+
+---
+
+## 四、版本策略(ADR-006)
 
 - **基线** = ungoogled-chromium 当前 stable tag,滚动跟随,约 4 周一版
 - **不做 LTS**;**绝不靠改 UA 假装新版本**(版本号 = 内核真版本)
@@ -77,7 +108,7 @@ tools/20-rebase.sh --dry-run          # 只打印将要执行的动作,不落地
 
 ---
 
-## 四、补丁布局(尚未建立,等第 1 次成功构建后落位)
+## 五、补丁布局(尚未建立,等第 1 次成功构建后落位)
 
 ```
 chromium/patches/
@@ -97,18 +128,3 @@ chromium/patches/
 |---|---|---|
 | `userAgentData.brands` 里要有 `Google Chrome` | 内核 | M0 §2.2(ego 的形态) |
 | UA 去掉 `HeadlessChrome`;补 `window.chrome`;WebGL 不用 SwiftShader | 内核 | M0 §2.2 |
-
----
-
-## 五、尚未验证(不掩饰)
-
-本目录的脚本是**按 Chromium / ungoogled-chromium 的公开构建流程写的**,
-但**尚未在本机真实跑通**(工具链未装)。第一次实跑时,以下必须逐项核对:
-
-- [ ] `winget` 的 VS Build Tools 包 ID 与工作负载参数在当前版本上有效
-- [ ] `gclient sync` 的目标版本写法(用 tag 还是 commit SHA)
-- [ ] ungoogled-chromium 补丁集的**取用方式**(是 clone 其仓库后 `utils/patches.py`, 还是直接 `git apply patches/**`)
-- [ ] `gn args` 的完整清单(是否用 `is_official_build=true`;`symbol_level` 取值对构建时间的影响)
-- [ ] 首次构建的实际耗时与磁盘峰值
-
-**头一次跑通后,把上面的勾全部打上,并把 `chromium/UPSTREAM` 填实** —— 那才算 M1 验收。

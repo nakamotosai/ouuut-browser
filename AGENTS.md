@@ -55,7 +55,7 @@
 
 ### 3.2 构建
 
-- **rebase 必须是一条命令**(`tools/rebase.sh`),这是 M1 的硬验收
+- **rebase 必须是一条命令**(`tools/20-rebase.sh`),这是 M1 的硬验收
 - 任何手工步骤都要写进脚本;手工步骤 = bug
 - 构建产物不入库;入库的是「能复现它的脚本 + 版本锚」
 
@@ -95,11 +95,17 @@
 # 读项目状态
 cat README.md; cat docs/里程碑.md
 
-# 构建(尚未建立,见 M1)
-# tools/rebase.sh <chromium-version>
+# 构建(工具链未装,见 chromium/README.md §二)
+tools/20-rebase.sh --dry-run          # 一条命令 rebase(干跑)
+tools/20-rebase.sh <chromium-version> # 真跑
 
-# M0 探针(尚未建立,见 M0)
+# M0 探针(已建成,契约见 probe/README.md)
+probe/.venv/Scripts/python.exe probe/run.py --list
+probe/.venv/Scripts/python.exe probe/run.py --all
 ```
+
+**注意**:`bash` 按名字解析可能落到 WSL 启动器(见 `docs/坑与解法.md` 坑-1)。
+脚本类调用一律写全路径:`"C:/Program Files/Git/bin/bash.exe"`。
 
 ---
 
