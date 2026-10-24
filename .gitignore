@@ -1,0 +1,56 @@
+# === 凭据:绝不入库 ===
+.env
+.env.*
+*.key
+*.pem
+secrets*
+credentials*
+*_token
+.tokens/
+
+# === 构建产物 ===
+/out/
+/build/
+/dist/
+*.exe
+*.dll
+*.pdb
+*.lib
+*.obj
+*.o
+*.a
+*.so
+*.dylib
+*.zip
+*.7z
+*.tar.gz
+
+# === Chromium 源码树(fetch 脚本拉取,不入库)===
+/chromium/src/
+/chromium/build/
+/chromium/depot_tools/
+/chromium/out/
+/chromium/*.tar.*
+
+# === 语言生态 ===
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+/venv/
+*.egg-info/
+
+# === 探针产物 ===
+/probe/out/
+/probe/screenshots/
+/probe/*.json
+!/probe/config*.json
+
+# === 编辑器 / 系统 ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*~

@@ -1,0 +1,33 @@
+# 统一行尾为 LF(仓库内),避免 Windows 作者 / Linux CI 分叉
+* text=auto eol=lf
+
+# 显式声明二进制,防止被当文本改写
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.zip  binary
+*.7z   binary
+*.gz   binary
+*.exe  binary
+*.dll  binary
+*.pdb  binary
+*.so   binary
+*.dylib binary
+
+# Windows 脚本保持 CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Shell 脚本强制 LF(否则 Linux 上不可执行)
+*.sh   text eol=lf
+
+# 避免 diff/统计噪音
+*.json  text
+*.lock  text

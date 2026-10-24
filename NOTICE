@@ -1,0 +1,77 @@
+ouuut 浏览器
+Copyright 2026 ouuut contributors
+
+本产品包含以下第三方作品。此处仅登记归属与许可,完整许可文本随源码一并分发或在
+下列上游地址可得。**任何新增依赖必须先在本文件登记**(见 AGENTS.md 门规)。
+
+================================================================================
+1. Chromium
+================================================================================
+许可:License: BSD-3-Clause
+版权:Copyright 2015 The Chromium Authors
+上游:https://chromium.googlesource.com/chromium/src/+/main/LICENSE
+用途:ouuut 浏览器内核的基底。
+
+本产品对 Chromium 的修改以补丁集形式保存在 `chromium/patches/`(尚未建立,见 M1),
+补丁集本身使用下列第 3 条的 Apache-2.0 许可。
+
+Chromium 内含的其他第三方组件(约 2000 个,含 Skia/ANGLE/V8/ffmpeg/pdfium 等)
+各自许可以 Chromium 源码树内的 `LICENSE`、`about:credits` 与
+`third_party/*/LICENSE*` 为准,随二进制分发时由 Chromium 自身的 credits 机制呈现。
+
+
+================================================================================
+2. ungoogled-chromium
+================================================================================
+许可:BSD-3-Clause
+版权:Copyright 2025 ungoogled-software 及贡献者
+上游:https://github.com/ungoogled-software/ungoogled-chromium/blob/master/LICENSE
+用途:去 Google 化补丁集与跨平台构建工具链。ouuut 的构建脚本派生自此。
+
+本产品为派生作品,按 BSD-3-Clause 要求保留上述版权声明、条件与免责声明。
+**未使用其名称或贡献者名义为 ouuut 背书。**
+
+使用的上游版本:见 `chromium/UPSTREAM`(尚未建立,见 M1)。
+
+
+================================================================================
+3. ego lite harness(待 fork,见 M2)
+================================================================================
+许可:MIT
+上游:https://github.com/citrolabs/ego-lite
+用途:**计划中** —— 复用其 agent 界面层(JS 批处理、`@ref`/`loc=` 选择器、
+TaskSpace 生命周期、site-learnings)。
+
+状态:**尚未 fork、尚未包含任何代码**。M2 落地时必须:
+  (a) 记录 fork 时的上游 commit SHA 于 `docs/决策记录.md`;
+  (b) 在本文件附上完整 MIT 许可文本与版权行;
+  (c) 保留 `LICENSES/ego-lite-MIT.txt`。
+
+注意:ego lite 的**二进制本体**是闭源且禁止派生的,ouuut **不包含**其二进制、
+不派生其二进制、不复制其代码(法律红线 L1)。仅复用其**独立仓库中 MIT 许可的 harness**。
+
+
+================================================================================
+4. 公开研究与设计参考(不含代码)
+================================================================================
+以下项目仅作为**设计参考**被阅读,ouuut 不包含其代码、不派生其作品:
+
+- rebrowser / rebrowser-patches —— CDP `Runtime.enable` 泄漏的公开研究
+  https://github.com/rebrowser/rebrowser-patches
+- Camoufox —— 指纹一致性问题的表达方式(许可 MPL-2.0,若将来引入须在此登记)
+  https://github.com/daijro/camoufox
+- fingerprint-chromium —— 指纹开关组合思路
+  https://github.com/adryfish/fingerprint-chromium
+- CloakBrowser —— 仅阅读其公开文档与产品行为,用于竞品对照
+  **其 `BINARY-LICENSE.md` 禁止再分发/派生/逆向,ouuut 未读取、未复制其任何二进制**。
+
+说明:对本机安装的 ego lite 与 CloakBrowser 二进制做过的静态分析
+(`docs/附录B-REA逆向结论.md`)用于**理解接口形状与设计取舍**,
+产出为自研代码,**未复制任何代码、未派生任何作品、未打包任何二进制**。
+
+
+================================================================================
+5. 尚未登记的依赖
+================================================================================
+本项目当前尚无自有源码依赖。M1 之后每个新增依赖(Rust crate / npm 包 /
+Python 包,含构建期依赖)必须在此登记:名称、版本、许可、上游 URL、用途。
