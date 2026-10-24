@@ -136,6 +136,24 @@ if [ "$DRY_RUN" -eq 0 ]; then
   继续下去 git 的 fetch/checkout 会在**本项目仓库**里执行、作废未提交改动。中止。
   请把 chromium/src 换成真实的 chromium/src 克隆(见 tools/10-fetch-chromium.sh)。"
   fi
+
+  # **产物锁守卫**(2026-10-24 实测踩到):上一次冒烟起过的产物实例若还在跑,
+  # 它会映射住 chrome.dll,于是整轮构建跑到**链接那一步**才炸:
+  #   lld-link: error: failed to write output './chrome.dll': permission denied
+  # 那意味着白烧几分钟到几十分钟。这里提前 3 秒查出来,并给出可直接照做的清理命令。
+  if [ -f "${OUT_DIR}/chrome.dll" ]; then
+    LOCK_PROBE="$(powershell -NoProfile -Command "
+      try { \$fs = [System.IO.File]::Open('$(winpath "${OUT_DIR}\\chrome.dll")', 'Open', 'ReadWrite', 'None'); \$fs.Close(); '' }
+      catch { 'LOCKED' }" 2>/dev/null | tr -d '\r\n')"
+    if [ "$LOCK_PROBE" = "LOCKED" ]; then
+      die "产物 chrome.dll 被占用(有实例还在跑),链接阶段必然失败。先清掉**本项目的**产物实例:
+    powershell -NoProfile -Command \"Get-Process chrome -ErrorAction SilentlyContinue |
+      Where-Object { \\\$_.Path -like '*ouuut-browser*out\\Release*' } | Stop-Process -Force\"
+  然后再跑本脚本。
+  (别去杀用户自己的 Chrome / omp 的 puppeteer —— 上面那条只匹配本项目 out/Release 下的。) "
+    fi
+    printf '  产物锁:chrome.dll 可独占打开 ✅\n'
+  fi
 else
   printf '  [dry-run] 会校验 %s 是自己的 git 工作树(路径先归一化再比)\n' "$SRC_DIR"
 fi
@@ -292,18 +310,40 @@ else
 fi
 
 # ---- 6/7 冒烟(**必须在写 UPSTREAM 之前**)---------------------------------
-log "6/7 冒烟:启动一次产物"
+log "6/7 冒烟:校验产物(文件级取证,不启动浏览器)"
 CHROME_BIN="${OUT_DIR}/chrome.exe"
 [ -f "$CHROME_BIN" ] || CHROME_BIN="${OUT_DIR}/chrome"
+DLL_BIN="${OUT_DIR}/chrome.dll"
 if [ "$DRY_RUN" -eq 0 ]; then
   [ -f "$CHROME_BIN" ] || die "构建结束但找不到产物:${CHROME_BIN}"
-  VER_OUT="$("$CHROME_BIN" --version 2>&1 | head -1 || true)"
-  printf '  产物自报版本:%s\n' "${VER_OUT:-<空>}"
-  # 注意:`chrome.exe --version` 在 Windows 上的行为**尚未验证**(见 README §三)。
-  # 取不到版本号时只告警不判死,但会把结果写进 UPSTREAM 的 smoke= 字段。
+  [ -f "$DLL_BIN" ]    || die "构建结束但找不到内核:${DLL_BIN}"
+
+  # **为什么不用 `chrome.exe --version`**:
+  #   chrome.exe 是 **GUI 子系统**二进制,没有附着的控制台。实测(2026-10-24)
+  #   `chrome.exe --version` 返回 **rc=0 但输出长度为 0** —— 这条路**永远**取不到版本号。
+  # 改读 **PE 的版本资源**:纯文件级取证,不启动任何进程,也不碰任何 profile。
+  VER_INFO="$(powershell -NoProfile -Command \
+    "(Get-Item '$(winpath "$DLL_BIN")').VersionInfo.FileVersion" 2>/dev/null | tr -d '\r\n')"
+  printf '  内核 chrome.dll 自报版本:%s\n' "${VER_INFO:-<空>}"
+
+  # **真正的断言**(以前这里只是个打印,等于没验):产物版本必须与目标一致。
+  case "$VER_INFO" in
+    *"$CHROMIUM_REF"*) printf '  ✅ 版本与目标一致(%s)\n' "$CHROMIUM_REF" ;;
+    "")  warn "读不到 PE 版本资源 —— 无法核对版本(产物文件仍在)。" ;;
+    *)   die "产物版本与目标不符:产物=${VER_INFO} 目标=${CHROMIUM_REF}
+  → 这次构建出来的**不是**你要的版本,绝不能当成 ${TARGET} 的产物发出去。" ;;
+  esac
+
+  # 体积守卫:chrome.dll 装了绝大部分代码,明显偏小说明构建不完整
+  DLL_MB=$(( $(wc -c < "$DLL_BIN") / 1048576 ))
+  EXE_MB=$(( $(wc -c < "$CHROME_BIN") / 1048576 ))
+  printf '  chrome.dll = %s MB · chrome.exe = %s MB\n' "$DLL_MB" "$EXE_MB"
+  [ "$DLL_MB" -gt 100 ] || die "chrome.dll 只有 ${DLL_MB} MB —— 构建不完整(预期 >100 MB)"
+
+  VER_OUT="$VER_INFO"
 else
   VER_OUT="<dry-run>"
-  printf '  [dry-run] 启动 %s --version\n' "$CHROME_BIN"
+  printf '  [dry-run] 读 %s 的 PE 版本资源并核对 == %s,再查体积 >100 MB\n' "$DLL_BIN" "$CHROMIUM_REF"
 fi
 
 # ---- 7/7 写 UPSTREAM(仅在冒烟走完之后)------------------------------------
@@ -325,9 +365,15 @@ if [ "$DRY_RUN" -eq 0 ]; then
     echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "patch_count=${#PATCHES[@]}"
     echo "patch_digest=${PATCH_DIGEST}"
+    # 用 stdin 喂 `sha256sum`(**不要**传路径):传 Windows 路径时 GNU coreutils 会
+    # 因文件名含反斜杠而给输出加 `\` 前缀,`cut -f1` 拿到的是 `\a21d0e8e…` ——
+    # 实测真的写进了 UPSTREAM(2026-10-24)。喂 stdin 则无文件名、无前缀。
     echo "artifact=${CHROME_BIN}"
-    echo "artifact_sha256=$(sha256sum "$CHROME_BIN" | cut -d' ' -f1)"
-    echo "gn_args_digest=$(printf '%s' "$GN_ARGS" | sha256sum | cut -d' ' -f1)"
+    echo "artifact_sha256=$(sha256sum < "$CHROME_BIN" | cut -d' ' -f1)"
+    # 曾经这里引用了一个**从未赋值**的 `$GN_ARGS`,在 `set -u` 下直接报
+    # `GN_ARGS: unbound variable`,并把 sha256(空串) 写进 UPSTREAM。
+    # 真正的启动参数在 `$ARGS_FILE` 里(4/7 阶段写的)。
+    echo "gn_args_digest=$(sha256sum < "$ARGS_FILE" | cut -d' ' -f1)"
     echo "smoke=${VER_OUT}"
   } > "$TMP_UPSTREAM"
   mv -f "$TMP_UPSTREAM" "$UPSTREAM_FILE"   # 原子替换:冒烟失败时不会留下假锚
