@@ -67,3 +67,6 @@ venv/
 Thumbs.db
 *.swp
 *~
+
+# gclient 的簿记产物(构建中间态,不该入库)
+chromium/.gclient_previous_sync_commits
