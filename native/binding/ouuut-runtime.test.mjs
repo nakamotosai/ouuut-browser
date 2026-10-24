@@ -146,3 +146,55 @@ test("harness 不订 onCDPMessage 时,入站消息被丢弃而不是报错", asy
   const res = await env.cdp.send("Fake.echo", { alive: true });
   assert.deepEqual(res.echo, { alive: true });
 });
+
+// ---- M4 驱动层守卫:证明它**接在链路上**,不只是单元测试里孤立活着 ------------
+//
+// (与 `cdp-guard.test.mjs` 的区别:那边验守卫自己的逻辑,这边验"它真的挡在
+//  sendCDPMessage → 管道 之间"。少了这条,守卫可能是写好却没人调用的死代码。)
+
+test("★ M4 接线:`Runtime.enable` 经 sendCDPMessage 进来时**到不了管道**", async (t) => {
+  const env = boot();
+  t.after(() => env.dispose());
+
+  const errors = [];
+  env.runtime.api.onSendCDPMessageError = (msg, code) => errors.push({ msg, code });
+
+  const arrived = [];
+  const offRaw = env.cdp.onRaw((m) => arrived.push(m));
+
+  env.runtime.api.sendCDPMessage(JSON.stringify({ id: 1, method: "Runtime.enable", params: {} }));
+
+  offRaw();
+  assert.equal(arrived.length, 0, "被拦的命令绝不能出现在管道上");
+  assert.equal(errors.length, 1, "必须走 onSendCDPMessageError 报出来,不能静默放过");
+  assert.equal(errors[0].code, "OUUUT_CDP_COMMAND_HELD");
+});
+
+test("★ M4 接线:`Emulation.setUserAgentOverride` 缺 metadata → 同样到不了管道(fail-closed)", async (t) => {
+  const env = boot();
+  t.after(() => env.dispose());
+
+  const errors = [];
+  env.runtime.api.onSendCDPMessageError = (msg, code) => errors.push(code == null ? "" : code);
+
+  env.runtime.api.sendCDPMessage(
+    JSON.stringify({ id: 2, method: "Emulation.setUserAgentOverride", params: { userAgent: "X" } }),
+  );
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0], "OUUUT_UA_METADATA_REQUIRED", "补不齐就绝不能发 —— 发了就是 brands: [] 那个红");
+});
+
+test("放行名单里的命令**照常**走到管道(守卫不能把功能一起挡死)", async (t) => {
+  const env = boot();
+  t.after(() => env.dispose());
+
+  const got = new Promise((resolve) => {
+    env.runtime.api.onCDPMessage = (payload) => {
+      const m = JSON.parse(payload);
+      if (m.id === 777) resolve(m);
+    };
+  });
+  env.runtime.api.sendCDPMessage(JSON.stringify({ id: 777, method: "Browser.getVersion", params: {} }));
+  const res = await got;
+  assert.ok(res, "合法命令必须能拿到响应");
+});

@@ -35,6 +35,7 @@
 //   原样转发出去、原样送回来。绝不能自己重编 id,否则 harness 永远等不到配对的响应。
 
 import { CdpPipeError } from "./cdp-pipe.mjs";
+import { createCdpGuard, ACTION } from "./cdp-guard.mjs";
 import {
   createTaskSpaceRegistry,
   isCdpBlockedByUserControl,
@@ -63,11 +64,14 @@ export class OuUutRuntimeError extends Error {
  * @param {object} [o.registry]    任务空间注册表(默认新建一个空表)
  * @param {Array}  [o.profiles]    `listProfiles()` 的数据源(M3 才做三种 kind)
  */
-export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profiles } = {}) {
+export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profiles, cdpGuard } = {}) {
   if (!cdp || typeof cdp.sendRaw !== "function" || typeof cdp.onRaw !== "function") {
     throw new OuUutRuntimeError("createOuUutRuntime 需要一个 spawnCdpPipe() 的返回值");
   }
   const spaces = registry ?? createTaskSpaceRegistry();
+  // 默认**强制**(`enforce`)。要做取证/对照实验时显式传 `mode:"audit"` ——
+  // 刻意不把"默认不拦"作为选项:那就等于 M4 的保护默认是关的。
+  const guard = cdpGuard ?? createCdpGuard();
   const profileList =
     Array.isArray(profiles) && profiles.length > 0
       ? profiles
@@ -113,8 +117,24 @@ export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profile
         `任务已交给用户,拒绝执行会改变浏览器状态的命令:${parsed.method}`,
       );
     }
+    // **驱动层守卫**(M4):按住有页面副作用的 CDP 命令。
+    // 放在 user-control 门**之后**:所有权是更外层的语义,先挡那个。
+    // 依据见 `cdp-guard.mjs` 抬头 —— 每条规则都有实测出处,不是照抄某个库的黑名单。
+    const verdict = guard.inspect(parsed.method, parsed.params ?? {});
+    if (verdict.action === ACTION.HOLD) {
+      return reportSendError(parsed, "OUUUT_CDP_COMMAND_HELD", verdict.reason);
+    }
+    const outgoing = parsed;
+    if (verdict.action === ACTION.REWRITE) {
+      const md = parsed.params?.userAgentMetadata;
+      const ok = Array.isArray(md?.brands) && md.brands.length > 0;
+      if (!ok) {
+        // **fail-closed**:补不齐 metadata 就绝不能发 —— 发了就是 `brands: []` 那个红(M1 实测)
+        return reportSendError(parsed, "OUUUT_UA_METADATA_REQUIRED", verdict.reason);
+      }
+    }
     try {
-      cdp.sendRaw(parsed);
+      cdp.sendRaw(outgoing);
     } catch (err) {
       return reportSendError(
         parsed,
