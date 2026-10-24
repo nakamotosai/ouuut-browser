@@ -152,13 +152,13 @@ def main() -> int:
     print(f"htmlContexts    : {len(data['htmlContexts'])}")
     print(f"shadowHosts     : {len(data['shadowHosts'])}")
     print(f"frames          : {len(data['frames'])}")
-    print(f"\n--- 前 15 个匹配元素 ---")
+    print("\n--- 前 15 个匹配元素 ---")
     for e in data["matchedElements"][:15]:
         print(f"  {e['tag']}#{e['id']}.{e['cls'][:50]} :: {e['text'][:90]}")
-    print(f"\n--- 前 5 个 html 上下文 ---")
+    print("\n--- 前 5 个 html 上下文 ---")
     for c in data["htmlContexts"][:5]:
         print(f"  [{c['kw']}] …{c['ctx'][:200]}…")
-    print(f"\n--- shadow / frame ---")
+    print("\n--- shadow / frame ---")
     for s in data["shadowHosts"][:5]:
         print(f"  shadow {s['tag']}#{s['id']} :: {s['text'][:100]}")
     for f in data["frames"][:5]:

@@ -86,6 +86,8 @@ TOKEN_JS = r"""
 # 等了这么久还没 token,就认为 Cloudflare 在要求交互
 CHALLENGE_WAIT_MS = 25000
 POLL_EVERY_MS = 1500
+# 控件还没渲染出来时,给它的宽限期;超过这个时间还没控件就认输(探针无效)
+WIDGET_GRACE_MS = 6000
 
 
 def _snapshot(br) -> dict:
@@ -94,12 +96,12 @@ def _snapshot(br) -> dict:
 
 def _classify(detail: dict, timed_out: bool) -> str:
     if detail.get("widgetCount", 0) == 0:
-        return VERDICT_ERROR              # 控件没渲染,探针无效
+        return VERDICT_ERROR  # 控件没渲染,探针无效
     if detail.get("dummyTokenPresent"):
         # 假 token = 该站根本没做评分。**这是探针无效,不是通过。**
         return VERDICT_ERROR
     if detail.get("tokenPresent"):
-        return VERDICT_PASSED             # Cloudflare 免交互放行
+        return VERDICT_PASSED  # Cloudflare 免交互放行
     # 控件在了但始终不给 token = Cloudflare 要求人工交互
     return VERDICT_DETECTED
 
@@ -119,7 +121,7 @@ def run(br) -> tuple[str, dict]:
         except Exception as exc:
             detail = {"error": repr(exc), "widgetCount": 0}
             break
-        if detail.get("tokenPresent") or detail.get("widgetCount", 0) == 0 and waited > 6000:
+        if detail.get("tokenPresent") or (detail.get("widgetCount", 0) == 0 and waited > WIDGET_GRACE_MS):
             break
     else:
         timed_out = True
@@ -127,7 +129,7 @@ def run(br) -> tuple[str, dict]:
 
     detail["waited_ms"] = waited
     detail["challenge_wait_ms"] = CHALLENGE_WAIT_MS
-    detail["interaction_performed"] = False   # 本探针**从不**交互(见文件头)
+    detail["interaction_performed"] = False  # 本探针**从不**交互(见文件头)
     detail["timed_out_without_token"] = bool(timed_out and not detail.get("tokenPresent"))
 
     # 假 sitekey 检测:官方 dummy demo 对所有人直接发 `XXXX.DUMMY.TOKEN`。
@@ -151,9 +153,11 @@ def run(br) -> tuple[str, dict]:
     return _classify(detail, timed_out), detail
 
 
-register_site(Site(
-    name="turnstile",
-    url=URL,
-    run=run,
-    note="Cloudflare 是否免交互放行(只看 token,不点勾;法律红线 L3)",
-))
+register_site(
+    Site(
+        name="turnstile",
+        url=URL,
+        run=run,
+        note="Cloudflare 是否免交互放行(只看 token,不点勾;法律红线 L3)",
+    )
+)

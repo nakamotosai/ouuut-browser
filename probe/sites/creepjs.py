@@ -1,44 +1,62 @@
-"""site: CreepJS —— 自动化 / headless 迹象 + 指纹一致性。
+"""site: CreepJS —— 自动化 / headless 迹象(**按布尔 tell 判,不按百分比**)。
 
 ---
 
-## 关于「trust score」的教训(2026-10-24 实测更正)
+## 这个探针量什么,以及它**不**量什么
 
-我最初以为该站会显示 `trust score: NN%`,为此写了一套按 `.trust-score` 选择器 + 文本正则
-的提取逻辑。**实测发现:当前版本的主页面根本不显示 trust score** ——
-剥离 base64 后的 6 万字符全文里没有任何 `trust` 字样(唯一的命中全是
-`TrustedTypePolicyFactory` 这类 DOM API 名)。等 20s、再等 45s 元素都不出现。
+量的:页面上 `Headless` 段列出的那组**布尔 tell**(`noChrome`、`noPlugins`、
+`notificationIsDenied`、`hasPermissionsBug` …),以及该段的**等级百分比**。
 
-改用 `probe/tools/recon_site.py` 摊开真实 DOM 后,看清它现在报的是**按段列出的哈希 + 百分比**:
+**不量**:它**不**是我们缺的那个「指纹一致性」独立站 —— 它覆盖的是
+**headless / 自动化迹象**这一根轴,和 `bot-detector` 的 `headless` 测试**同一根轴**。
+所以它是**二次确认**,不是独立维度。(缺口登记在 `docs/M0-结论.md` §四。)
+
+---
+
+## 两次猜错的记录(留着免得后来人再猜)
+
+**第一次**:以为它显示 `trust score: NN%`,写了一套 `.trust-score` 选择器 + 文本正则。
+实测:当前版本主页面**根本没有 trust score** —— 剥离 base64 后的全文里 `trust` 零命中
+(14 处命中全是 `TrustedTypePolicyFactory` 这类 DOM API 名)。
+
+**第二次**:改用 `probe/tools/recon_site.py` 看到一份文本,里面有
+`like headless: d31f1ac1 100% headless: 44172120 0%`,于是写了「哈希 + 百分比」的正则。
+**同一天再跑,页面渲染成另一种形态**:
 
 ```
-FP ID: e2ab833c… Fuzzy: 134d40c8…
-… Headlesse02c2159 chromium: true 88% like headless: d31f1ac1 100% headless: 44172120 0%
-  stealth: 0c019315 platform hints: Arial,"Microsoft YaHei UI" 0:73:100:91:91
-  Resistanceeb6b354a privacy: unknown security: unknown mode: unknown extension: unknown
+Headlesse02c2159  chromium: true 88%
+  like headless: d31f1ac1   × Like Headless
+  noChrome: true   hasPermissionsBug: true   noPlugins: true   noMimeTypes: true
+  notificationIsDenied: true   hasKnownBgColor: false   prefersLightColor: true
+  uaDataIsBlank: false   pdfIsDisabled: ...
 ```
 
-**决策相关的是 `like headless` 与 `headless` 两个百分比** —— 它们正好落在我们
-M0 里那两项内核层红项(`useragent` / `headless`)的同一根轴上。
+`like headless` **没有百分比**了。按百分比解析必然落空。
 
-**教训**:写站点探针前先用 `recon_site.py` 看真实结构,别凭印象猜选择器。
-本文件保留这段记录,免得后来人再猜一遍。
+**教训**:一个站点的**文本渲染形态会变**,而且同一天内就变。所以判据要挑
+**语义最稳定**的那部分 —— 这里是「布尔 tell 的名字与取值」,不是排版。
 """
 
 from __future__ import annotations
-
-import re
 
 from probe.base import VERDICT_DETECTED, VERDICT_ERROR, VERDICT_PASSED, Site, register_site
 
 URL = "https://abrahamjuliot.github.io/creepjs/"
 SETTLE_MS = 25000
-# 该段百分比的出现最多再等这么久
-WAIT_FOR_SECTION_MS = 20000
+# Headless 段的等级 —— 只在「没有任何 tell 命中」时作参考,不单独用它判 detected
+GRADE_SUSPICIOUS = 80
 
-# 判定阈值(显式,可复算)
-LIKE_HEADLESS_MAX = 50.0   # 「像 headless」超过此值 → detected
-HEADLESS_MAX = 50.0        # 「headless」超过此值 → detected
+# 这些 tell 为 true 时,说明浏览器带有 headless / 自动化特征
+HEADLESS_TELLS = {
+    "nochrome": "window.chrome 缺失(桌面 Chrome 一定有)",
+    "noplugins": "navigator.plugins 为空",
+    "nomimetypes": "navigator.mimeTypes 为空",
+    "notificationisdenied": "Notification.permission 被拒而 permissions.query 说 prompt",
+    "haspermissionsbug": "permissions API 行为与真实 Chrome 不一致",
+    "hasheadlessworkerua": "Web Worker 里带 headless UA",
+    "hasheadlessua": "UA 里带 headless",
+    "nodownlinkmax": "NetworkInformation.downlinkMax 缺失",
+}
 
 _EXTRACT_JS = r"""
 () => {
@@ -49,39 +67,50 @@ _EXTRACT_JS = r"""
     htmlBytes: document.documentElement.outerHTML.length,
   };
 
-  // CreepJS 会把大量 base64(字体/脚本)塞进 DOM,直接 textContent 会被噪声淹没
+  // CreepJS 往 DOM 里塞大量 base64(字体/脚本),直接 textContent 会被噪声淹没
   // (实测 documentElement.textContent 有 17.7 万字符)。剥掉再取。
   const clone = document.body.cloneNode(true);
   clone.querySelectorAll('script,style,noscript,link,svg,img,canvas,iframe').forEach((e) => e.remove());
-  out.cleanText = norm(clone.textContent).slice(0, 40000);
+  const text = norm(clone.textContent);
+  out.textLen = text.length;
 
-  // 结构化取「段名 + 哈希 + 百分比」这种行 —— 这是当前版本的实际格式
-  const rows = [];
-  const re = /([A-Za-z][A-Za-z \/-]{2,24}?):\s*(?:([0-9a-f]{8})|(true|false|unknown))\s+([0-9]+(?:\.[0-9]+)?)%/g;
+  // 1) 布尔 tell:形如 `name: true` / `name: false`,名字是驼峰或全小写字母
+  const tells = {};
+  const reTell = /\b([A-Za-z][A-Za-z]{3,30})\s*:\s*(true|false)\b/g;
   let m;
-  while ((m = re.exec(out.cleanText)) !== null && rows.length < 40) {
-    rows.push({ name: m[1].trim().toLowerCase(), hash: m[2] || "", flag: m[3] || "", pct: Number(m[4]) });
+  while ((m = reTell.exec(text)) !== null) {
+    tells[m[1].toLowerCase()] = m[2] === 'true';
   }
-  out.rows = rows;
+  out.tells = tells;
+
+  // 2) Headless 段开头的等级:形如 `Headlesse02c2159 chromium: true 88%`
+  const g = text.match(/Headless[0-9a-f]{6,10}\s+chromium\s*:\s*(true|false)\s+(\d{1,3})%/i);
+  if (!g) {
+    // 退一步:任意 `NN%` 里找最像段等级的
+    const g2 = text.match(/\bchromium\s*:\s*true\s+(\d{1,3})%/i);
+    out.headlessGrade = g2 ? Number(g2[1]) : null;
+  } else {
+    out.headlessGrade = Number(g[2]);
+  }
+
+  out.headSection = (text.match(/Headless[0-9a-f]{6,10}.{0,400}/i) || [''])[0];
   return out;
 }
 """
 
 
-def _find(rows: list[dict], name: str) -> float | None:
-    for r in rows:
-        if r["name"] == name:
-            return r["pct"]
-    return None
-
-
 def _classify(detail: dict) -> str:
-    like = detail.get("likeHeadless")
-    head = detail.get("headless")
-    if like is None and head is None:
-        return VERDICT_ERROR          # 没取到判据 —— 不等于通过
-    if (like is not None and like > LIKE_HEADLESS_MAX) or (head is not None and head > HEADLESS_MAX):
+    tells = detail.get("tells") or {}
+    hits = {k: v for k, v in tells.items() if v and k in HEADLESS_TELLS}
+    grade = detail.get("headlessGrade")
+
+    if not tells and grade is None:
+        return VERDICT_ERROR  # 一条 tell 都没抓到 → 探针无效
+    if hits:
         return VERDICT_DETECTED
+    if grade is not None and grade >= GRADE_SUSPICIOUS:
+        # 等级高但没有 tell 命中 —— 不据此判 detected(会冤枉人);留在 detail 里供人看
+        return VERDICT_PASSED
     return VERDICT_PASSED
 
 
@@ -90,32 +119,18 @@ def run(br) -> tuple[str, dict]:
     br.wait(SETTLE_MS)
 
     detail = br.eval(_EXTRACT_JS)
-    rows = detail.get("rows") or []
 
-    like = _find(rows, "like headless")
-    head = _find(rows, "headless")
-    if like is None or head is None:
-        # 再等一轮(该段是异步算出来的)
-        br.wait(WAIT_FOR_SECTION_MS)
-        detail = br.eval(_EXTRACT_JS)
-        rows = detail.get("rows") or []
-        like = _find(rows, "like headless")
-        head = _find(rows, "headless")
-
-    detail["rows"] = rows
-    detail["likeHeadless"] = like
-    detail["headless"] = head
-    detail["stealth"] = _find(rows, "stealth")
-    detail["thresholds"] = {"like_headless_max": LIKE_HEADLESS_MAX, "headless_max": HEADLESS_MAX}
+    tells = detail.get("tells") or {}
+    detail["tellCount"] = len(tells)
+    detail["headlessHits"] = {
+        k: {"value": v, "why": HEADLESS_TELLS[k]} for k, v in tells.items() if v and k in HEADLESS_TELLS
+    }
     detail["settle_ms"] = SETTLE_MS
 
-    # 只保留判定相关的行,别把 4 万字符全塞进矩阵
-    detail.pop("cleanText", None)
-
-    if like is None and head is None:
+    if not tells and detail.get("headlessGrade") is None:
         detail["calibration"] = (
-            "未校准:未取到 'like headless' / 'headless' 百分比。"
-            "该站格式可能又变了 —— 先用 probe/tools/recon_site.py 重看结构。**本项不参与结论**."
+            "未校准:一条布尔 tell 都没抓到。该站渲染形态可能又变了 —— "
+            "先用 probe/tools/recon_site.py 重看结构。本项不参与结论。"
         )
 
     try:
@@ -126,9 +141,12 @@ def run(br) -> tuple[str, dict]:
     return _classify(detail), detail
 
 
-register_site(Site(
-    name="creepjs",
-    url=URL,
-    run=run,
-    note="Headless 段百分比(like headless / headless)+ 指纹段;判定按显式阈值",
-))
+register_site(
+    Site(
+        name="creepjs",
+        url=URL,
+        run=run,
+        note="Headless 段的布尔 tell(noChrome / noPlugins / notificationIsDenied …)"
+        "—— 与 bot-detector 的 headless 测试同一根轴,属二次确认",
+    )
+)

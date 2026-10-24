@@ -124,15 +124,17 @@ mkdir -p "$CHROMIUM_DIR"
 #   (几十万 commit,而 rebase 走的是 checkout 一个新 tag,不需要旧历史)。
 # `--filter=blob:none`:blob 按需拉取 —— 兼顾体积与 `git apply --3way`
 #   (三方合并要补丁 index 行的基对象,blobless 克隆会在需要时联网补)。
-# 一条 `git clone --branch` 搞定:它自带 checkout,不必再发一条独立的 `git checkout`
-# (本机的共享工作区策略会拦裸 `git checkout`)。
 # `--depth=1` 只取目标 tag 那一个 commit —— Chromium 的完整历史对我们是纯负担。
-# `--filter=blob:none` 让 blob 按需拉取,兼顾体积与 `git apply --3way`
-# (三方合并要补丁 index 行的基对象,blobless 克隆会在需要时联网补)。
-git clone --branch "$CHROMIUM_TAG" --depth=1 --filter=blob:none "$SRC_URL" "$SRC_DIR" \
+# **刻意不加 `--filter=blob:none`**:实测那样会让工作区检不出来 ——
+#   索引里有一条条文件、但 worktree **0 个文件**,`git status` 全是 `D`。
+#   原因是 blobless 克隆要按需拉 10 万+ 个 blob,在这条链路上不现实。
+#   不加 filter 就是一次把该 commit 的 blob 全拉下来(约 2 GB),可预测得多;
+#   而且 `git apply --3way` 需要的基对象一定在本地。
+git clone --branch "$CHROMIUM_TAG" --depth=1 "$SRC_URL" "$SRC_DIR" \
   || die "克隆失败或 tag ${CHROMIUM_TAG} 不存在于 ${SRC_URL}"
 cd "$SRC_DIR"
-printf '  已 checkout:%s\n' "$(git describe --tags --always 2>/dev/null || echo '?')"
+printf '  已 checkout:%s  文件数:%s\n' \
+  "$(git describe --tags --always 2>/dev/null || echo '?')" "$(git ls-files | wc -l)"
 
 log "3/3 gclient sync(拉依赖,约 50 GB)"
 cd "$CHROMIUM_DIR"

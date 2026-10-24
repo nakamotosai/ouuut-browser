@@ -16,8 +16,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# 实验脚本与命令行工具里的魔法数字无所谓
-"probe/tools/*.py" = ["PLR2004", "E501"]
+# 实验脚本与命令行工具里的魔法数字无所谓;工具脚本按需延迟导入探针模块也是刻意的
+"probe/tools/*.py" = ["PLR2004", "E501", "PLC0415"]
 # target 适配器**刻意**延迟导入 playwright/patchright/cloakbrowser ——
 # 这样即使某个驱动没装,也不影响其它适配器被扫描和注册
 "probe/targets/*.py" = ["PLR2004", "PLC0415", "E501"]
