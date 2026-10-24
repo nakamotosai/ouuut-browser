@@ -93,6 +93,38 @@ sync_with_retry() {
   return 1
 }
 
+# ---- 依赖镜像预检:自动生成 .gclient 的 custom_deps 跳过名单 ----
+#
+# 为什么要自动生成而不是手工维护:重写后的 URL **不一定存在** ——
+# `external/github.com/<org>/<repo>` 里有**子目录型**条目(实测 10 个,
+# 其中 7 个是 LLVM monorepo 的子目录:libc++ / libc++abi / libunwind / compiler-rt /
+# llvm-libc / libFuzzer / clang-format)。而 **gclient 会因为一个 dep 失败退出整个 sync**。
+# 手工维护的话,每换一个 Chromium 版本就要再踩一遍。
+ROOT_POSIX="$(cygpath -u "$REPO_ROOT" 2>/dev/null || printf '%s' "$REPO_ROOT")"
+
+find_python() {
+  local cand="${ROOT_POSIX}/probe/.venv/Scripts/python.exe"
+  if [ -x "$cand" ]; then printf '%s' "$cand"; return 0; fi
+  local c
+  for c in python3 python; do
+    if command -v "$c" >/dev/null 2>&1; then printf '%s' "$c"; return 0; fi
+  done
+  return 1
+}
+
+generate_skip_list() {
+  local py
+  py="$(find_python)" || {
+    warn "找不到 python —— 跳过依赖预检。
+  若 gclient sync 因某个 dep 失败,手工跑一次:
+      <python> tools/preflight-deps-mirror.py
+  把输出粘进 ${GCLIENT_FILE} 的 custom_deps。"
+    return 0
+  }
+  log "  用 ${py} 预检 DEPS(可能需要几分钟)"
+  "$py" "${ROOT_POSIX}/tools/preflight-deps-mirror.py" --emit-skips 2>/dev/null || true
+}
+
 for d in "/f/depot_tools" "F:/depot_tools" "/c/depot_tools" "C:/depot_tools" "$HOME/depot_tools"; do
   if [ -d "$d" ]; then export PATH="${d}:${PATH}"; DEPOT_TOOLS="$d"; break; fi
 done
@@ -163,8 +195,20 @@ else
 fi
 
 # ---- .gclient(内容与 fetch chromium 生成的一致,外加两处必要调整)----------
-log "1/4 写 .gclient"
-cat > "$GCLIENT_FILE" <<'EOF'
+log "1/5 写 .gclient"
+if [ -f "$SRC_DIR/DEPS" ]; then
+  log "  预检依赖镜像可达性(自动生成跳过名单)"
+  SKIP_LINES="$(generate_skip_list)"
+else
+  warn "  还没有 src/DEPS(首次克隆),跳过预检 —— 下次运行时会自动补上"
+  SKIP_LINES=""
+fi
+SKIP_BLOCK="${SKIP_LINES}"
+if [ -z "${SKIP_BLOCK}" ]; then
+  SKIP_BLOCK="      # (预检未发现不可达的依赖)"
+fi
+
+cat > "$GCLIENT_FILE" <<EOF
 # 本文件由 tools/10-fetch-chromium.sh 生成 —— 手工改会被下次运行覆盖。
 solutions = [
   {
@@ -174,14 +218,12 @@ solutions = [
     "url": "https://github.com/chromium/chromium.git",
     "managed": False,
     "custom_deps": {
-      # ★ 跳过:这些 dep 的 googlesource 路径指向 **GitHub 仓库的子目录**,
-      #   不是 1:1 的仓库,所以「external/github.com/ → github.com/」的镜像重写
-      #   会它们改成不存在的 URL,而 gclient 会因为一个 dep 失败**整个 sync 退出**。
-      #   它们都不是构建 Chrome 所必需的。
-      #   - SeleniumHQ/selenium/**py** —— WebDriver 的 python 绑定
-      #   - llvm/llvm-project/**clang/tools/clang-format** —— 只是代码格式化工具
-      "src/third_party/webdriver/pylib": None,
-      "src/third_party/webpagereplay/third_party/clang-format": None,
+      # ★ 以下由 tools/preflight-deps-mirror.py 自动发现 ——
+      #   这些依赖的 googlesource 路径指向 **GitHub 仓库的子目录**(不是 1:1 仓库),
+      #   镜像重写后 URL 不存在。而 gclient 会因为**一个 dep 失败退出整个 sync**,
+      #   所以必须显式跳过。它们都不是 Windows 桌面构建所必需的
+      #   (7 个是 LLVM monorepo 的子目录:libc++/libc++abi/libunwind/compiler-rt/llvm-libc/libFuzzer/clang-format)。
+${SKIP_BLOCK}
     },
     "custom_vars": {
       # PGO profile 约 1 GB,而我们的 gn args 里 chrome_pgo_phase=0,用不上
@@ -193,7 +235,7 @@ EOF
 echo "  wrote $GCLIENT_FILE"
 
 # ---- clone ------------------------------------------------------------------
-log "2/4 git clone chromium/src"
+log "2/5 git clone chromium/src"
 echo "  来源:${SRC_URL}"
 mkdir -p "$CHROMIUM_DIR"
 # `--depth=1`:只取目标 tag 那一个 commit。Chromium 的完整历史对我们是纯负担
@@ -216,16 +258,16 @@ else
   log "  (跳过克隆;SRC_DIR 已存在且校验通过)"
 fi
 
-log "3/4 注入 git 镜像重写(仅本进程)"
+log "3/5 注入 git 镜像重写(仅本进程)"
 export_git_mirror_env
 
-log "4/4 gclient sync(拉依赖,约 50 GB;上游按 IP 限流,带重试)"
+log "4/5 gclient sync(拉依赖,约 50 GB;上游按 IP 限流,带重试)"
 cd "$CHROMIUM_DIR"
 sync_with_retry || die "gclient sync 连续多次失败 —— 多半是上游 429 限流未缓解。
   可以:① 稍后重跑本脚本(gclient sync 幂等,已拉好的会跳过);
         ② 换出口 IP 再跑(限流是按 IP 的);
         ③ 加大重试次数:GCLIENT_SYNC_ATTEMPTS=8 重跑。"
 
-log "完成"
+log "5/5 完成"
 echo "源码:${SRC_DIR}"
 echo "下一步:tools/20-rebase.sh --dry-run"
