@@ -65,6 +65,12 @@ export vs2022_install="C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\B
 #    `build/toolchain/win/setup_toolchain.py`,都无兜底),而本机只有 10.0.26100.0。
 #    补丁 0003 让这两处优先读本变量。不设它时行为与上游一致。
 export OUUUT_WINDOWS_SDK_VERSION="10.0.26100.0"
+#
+# 4) 上游写死 `NTDDI_VERSION=NTDDI_WIN11_BR`,而 SDK 10.0.26100 **没有这个宏**
+#    (只定义到 `NTDDI_WIN11_GE`)。未定义标识符在 `#if` 里当 0 → `minwinbase.h`
+#    跳过整段类型声明 → 报 `unknown type name 'FILE_INFO_BY_HANDLE_CLASS'`。
+#    补丁 0004 让它优先读本变量。不设它时行为与上游一致。
+export OUUUT_NTDDI_VERSION="NTDDI_WIN11_GE"
 
 DRY_RUN=0
 TARGET=""
