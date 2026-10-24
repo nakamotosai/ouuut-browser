@@ -1,0 +1,29 @@
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+# 探针目录里有大量刻意保留的中文注释与说明性字符串,不做文档长度限制
+extend-exclude = [".venv", "out"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "PL", "RUF"]
+ignore = [
+  # subprocess.run 默认就是 check=False;显式写出来只是噪音
+  "PLW1510",
+  # 允许 assert(本项目探针脚本里用它做前置校验很自然)
+  "S101",
+  # 中文全角标点会被判为「ambiguous unicode」,是本项目的正常内容
+  "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 实验脚本与命令行工具里的魔法数字无所谓
+"probe/tools/*.py" = ["PLR2004", "E501"]
+# target 适配器**刻意**延迟导入 playwright/patchright/cloakbrowser ——
+# 这样即使某个驱动没装,也不影响其它适配器被扫描和注册
+"probe/targets/*.py" = ["PLR2004", "PLC0415", "E501"]
+# load_all() 里的动态导入是设计的一部分
+"probe/base.py" = ["PLC0415"]
+"probe/run.py" = ["PLR0915", "PLR2004"]
+
+[tool.ruff.format]
+quote-style = "double"

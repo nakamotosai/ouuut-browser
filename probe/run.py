@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 import time
@@ -127,7 +126,8 @@ def render_markdown(results: list[Result], meta: dict) -> str:
         "",
         f"- run_id: `{meta['run_id']}`",
         f"- 时间: {meta['started']} → {meta['finished']}",
-        f"- 出口: " + ", ".join(
+        "- 出口: "
+        + ", ".join(
             f"`{k}` = {v.get('ip') or '?'} ({'proxy' if v.get('proxy') else 'direct'})"
             for k, v in meta["egresses"].items()
         ),
@@ -142,11 +142,15 @@ def render_markdown(results: list[Result], meta: dict) -> str:
     for egress, target in pairs:
         cells = []
         for s in sites:
-            hit = next((r for r in results if r.egress == egress and r.target == target and r.site == s), None)
+            hit = next(
+                (r for r in results if r.egress == egress and r.target == target and r.site == s), None
+            )
             if hit is None:
                 cells.append("—")
             else:
-                icon = {VERDICT_PASSED: "✅", VERDICT_DETECTED: "❌", VERDICT_ERROR: "⚠️"}.get(hit.verdict, "?")
+                icon = {VERDICT_PASSED: "✅", VERDICT_DETECTED: "❌", VERDICT_ERROR: "⚠️"}.get(
+                    hit.verdict, "?"
+                )
                 cells.append(f"{icon} {hit.verdict} ({hit.duration_s}s)")
         lines.append(f"| `{egress}` | `{target}` | " + " | ".join(cells) + " |")
 
@@ -237,12 +241,16 @@ def main() -> int:
                     r = run_one(target, site, egress, args)
                 except Exception as exc:
                     log(f"  FATAL {type(exc).__name__}: {exc}")
-                    r = Result(target=target, site=site, egress=egress,
-                               verdict=VERDICT_ERROR, ts=now_iso(),
-                               error=f"{type(exc).__name__}: {exc}")
+                    r = Result(
+                        target=target,
+                        site=site,
+                        egress=egress,
+                        verdict=VERDICT_ERROR,
+                        ts=now_iso(),
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
                 results.append(r)
-                log(f"  -> {r.verdict} ({r.duration_s}s)"
-                    + (f" error={r.error}" if r.error else ""))
+                log(f"  -> {r.verdict} ({r.duration_s}s)" + (f" error={r.error}" if r.error else ""))
 
     finished = now_iso()
     meta = {

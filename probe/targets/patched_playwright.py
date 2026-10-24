@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Iterator
+from collections.abc import Iterator
 
 from probe.base import LaunchSpec, register_target
 

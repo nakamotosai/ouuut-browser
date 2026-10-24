@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import contextlib
 import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from probe.base import LaunchSpec, register_target
 

@@ -23,8 +23,9 @@ import contextlib
 import json
 import re
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from probe.base import LaunchSpec, ProbeError, register_target
 
@@ -52,8 +53,8 @@ class EgoFacade:
         """把 body 包成完整脚本跑一次,返回 stdout+stderr 的合并文本。"""
         self._n += 1
         script = (
-            f'const t = await taskSpace({json.dumps(self.space)});\n'
-            f'const p = t.page({json.dumps(self.label)});\n'
+            f"const t = await taskSpace({json.dumps(self.space)});\n"
+            f"const p = t.page({json.dumps(self.label)});\n"
             f"{body}\n"
         )
         path = self._script_dir / f"op-{self._n:03d}.mjs"
@@ -73,19 +74,29 @@ class EgoFacade:
         return out + "\n" + err
 
     def _eval_json(self, js_expr: str) -> Any:
-        """在页面里求值 js_expr 并把结果以 JSON 取回。
+        """在页面里求值并把结果以 JSON 取回。
 
-        js_expr 必须是**表达式**(可直接作为 evaluate 的字符串参数)。
+        **ego 的 `evaluate` 是表达式求值语义** —— 传进去的字符串会被当作**表达式**求值,
+        不像 Playwright 那样会「识别函数字符串并调用它」。所以:
+
+        - `p.evaluate("() => 1")` → 返回一个**函数对象**,JSON 序列化成 `{}`(实测)
+        - `p.evaluate("(() => 1)()")` → 返回 `1` ✅
+
+        因此这里统一包一层 IIFE。实测 **async IIFE 会被正确 await**
+        (`(async () => {return r})()` 能取回真实值),所以异步探测函数也能用。
+
+        证据:`probe/tools/exp_ego_async.py` 的四种写法对照。
         """
+        expr = f"({js_expr})()"
         body = (
-            f"const v = await p.evaluate({js_expr});\n"
-            f'console.log({json.dumps(_MARK)} + JSON.stringify(v === undefined ? null : v));'
+            f"const v = await p.evaluate({json.dumps(expr)});\n"
+            f"console.log({json.dumps(_MARK)} + JSON.stringify(v === undefined ? null : v));"
         )
         text = self._exec(body)
         for line in text.splitlines():
             idx = line.find(_MARK)
             if idx >= 0:
-                return json.loads(line[idx + len(_MARK):])
+                return json.loads(line[idx + len(_MARK) :])
         raise ProbeError(f"ego 未返回结果标记;输出片段: {text.strip()[:400]}")
 
     # ---- 门面接口 ----------------------------------------------------------
@@ -94,7 +105,10 @@ class EgoFacade:
         self._exec(f"await p.goto({json.dumps(url)});")
 
     def eval(self, js: str) -> Any:
-        return self._eval_json(json.dumps(js))
+        # 注意:传**原始**函数表达式。_eval_json 内部负责包 IIFE 与 json.dumps ——
+        # 这里若先 dumps 一次,就会变成 `("<函数源码>")()`,报
+        # `TypeError: "async () => {...}" is not a function`。
+        return self._eval_json(js)
 
     def wait(self, ms: int) -> None:
         self._exec(f"await p.waitForTimeout({int(ms)});")
@@ -106,13 +120,13 @@ class EgoFacade:
         body = (
             "let ok = false;\n"
             f"try {{ await p.waitForSelector({json.dumps(selector)}, {{ state: 'attached', timeout: {int(timeout_ms)} }}); ok = true; }} catch (e) {{ ok = false; }}\n"
-            f'console.log({json.dumps(_MARK)} + JSON.stringify(ok));'
+            f"console.log({json.dumps(_MARK)} + JSON.stringify(ok));"
         )
         text = self._exec(body)
         for line in text.splitlines():
             idx = line.find(_MARK)
             if idx >= 0:
-                return bool(json.loads(line[idx + len(_MARK):]))
+                return bool(json.loads(line[idx + len(_MARK) :]))
         return False
 
     def screenshot(self, name: str) -> str:
@@ -140,9 +154,9 @@ def launch(spec: LaunchSpec) -> Iterator[EgoFacade]:
 
     # 建空间 + 建页,取回 page label
     setup = (
-        f'const t = await taskSpace({json.dumps(space)});\n'
+        f"const t = await taskSpace({json.dumps(space)});\n"
         f"const p = await t.newPage();\n"
-        f'console.log({json.dumps(_MARK)} + JSON.stringify({{ space: t.spaceId, label: p.label }}));'
+        f"console.log({json.dumps(_MARK)} + JSON.stringify({{ space: t.spaceId, label: p.label }}));"
     )
     _SCRIPT_DIR.mkdir(parents=True, exist_ok=True)
     p0 = _SCRIPT_DIR / f"setup-{space}.mjs"
@@ -155,7 +169,7 @@ def launch(spec: LaunchSpec) -> Iterator[EgoFacade]:
     for line in text.splitlines():
         idx = line.find(_MARK)
         if idx >= 0:
-            label = json.loads(line[idx + len(_MARK):])["label"]
+            label = json.loads(line[idx + len(_MARK) :])["label"]
     if not label:
         raise ProbeError(f"ego 建页失败,输出:{text.strip()[:500]}")
 

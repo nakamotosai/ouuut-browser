@@ -75,10 +75,10 @@ def _classify(detail: dict) -> str:
 
     if public:
         if http_ip and all(p != http_ip for p in public):
-            return VERDICT_DETECTED          # WebRTC 报了与 HTTP 出口不同的公网地址
-        return VERDICT_DETECTED              # 只要有公网候选就算暴露(即使与出口一致)
+            return VERDICT_DETECTED  # WebRTC 报了与 HTTP 出口不同的公网地址
+        return VERDICT_DETECTED  # 只要有公网候选就算暴露(即使与出口一致)
     if http_ip:
-        return VERDICT_PASSED                # 只有 HTTP 出口,无 WebRTC 公网候选
+        return VERDICT_PASSED  # 只有 HTTP 出口,无 WebRTC 公网候选
     return VERDICT_ERROR
 
 
@@ -97,9 +97,11 @@ def run(br) -> tuple[str, dict]:
     return _classify(detail), detail
 
 
-register_site(Site(
-    name="browserleaks",
-    url=URL,
-    run=run,
-    note="WebRTC 是否泄漏非出口 IP;页面自证式判据(HTTP 出口 vs RTC 候选)",
-))
+register_site(
+    Site(
+        name="browserleaks",
+        url=URL,
+        run=run,
+        note="WebRTC 是否泄漏非出口 IP;页面自证式判据(HTTP 出口 vs RTC 候选)",
+    )
+)

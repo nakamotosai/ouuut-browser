@@ -46,6 +46,9 @@ venv/
 /probe/screenshots/
 /probe/*.json
 !/probe/config*.json
+# ego target 运行时生成的脚本与实验脚本(可重放,不入库)
+/probe/_ego_scripts/
+/probe/_ego_exp/
 
 # === 编辑器 / 系统 ===
 .vscode/

@@ -27,15 +27,15 @@ STATUS_PASS = "pass"
 STATUS_SKIP = "skip"
 
 _EMOJI_STATUS = {
-    "\U0001f534": STATUS_FAIL,   # 🔴
-    "\U0001f7e1": STATUS_WARN,   # 🟡
-    "\U0001f7e2": STATUS_PASS,   # 🟢
-    "\U0001f7e0": STATUS_WARN,   # 🟠
-    "\U0001f536": STATUS_WARN,   # 🔶
-    "\U0001f6a8": STATUS_FAIL,   # 🚨
-    "\u26aa": STATUS_SKIP,       # ⚪ (含 ⚪️)
-    "\U0001f535": STATUS_SKIP,   # 🔵
-    "\u2b1c": STATUS_SKIP,       # ⬜
+    "\U0001f534": STATUS_FAIL,  # 🔴
+    "\U0001f7e1": STATUS_WARN,  # 🟡
+    "\U0001f7e2": STATUS_PASS,  # 🟢
+    "\U0001f7e0": STATUS_WARN,  # 🟠
+    "\U0001f536": STATUS_WARN,  # 🔶
+    "\U0001f6a8": STATUS_FAIL,  # 🚨
+    "\u26aa": STATUS_SKIP,  # ⚪ (含 ⚪️)
+    "\U0001f535": STATUS_SKIP,  # 🔵
+    "\u2b1c": STATUS_SKIP,  # ⬜
 }
 _SKIPPED_NAMES = {"Test name"}
 
@@ -44,16 +44,22 @@ _EXTRACT_JS = r"""
   const norm = (s) => (s || '').replace(/\u00a0/g, ' ').replace(/[ \t]+/g, ' ').trim();
   const rows = [...document.querySelectorAll('table tr')];
 
+  // 注意:不能用 /\S/ 取状态符号 —— 🔴(U+1F534)是代理对,正则不带 u 标志时
+  // \S 只吃到高代理项,匹配失败。所以按第一个空格硬切。
+  const splitMark = (s) => {
+    const sp = s.indexOf(' ');
+    if (sp < 0) return { mark: '', name: s };
+    return { mark: s.slice(0, sp), name: s.slice(sp + 1).trim() };
+  };
+
   const tests = rows.map((tr) => {
     const tds = [...tr.children].map((td) => norm(td.innerText || td.textContent));
     if (tds.length < 2) return null;
-    const first = tds[0] || '';
-    // 首字符(可能带变体选择符)= 状态符号;其后为测试名
-    const m = first.match(/^(\S)\uFE0F?\s+(.*)$/) || first.match(/^(\S)\s+(.*)$/);
+    const { mark, name } = splitMark(tds[0] || '');
     return {
-      raw: first,
-      mark: m ? m[1] : '',
-      name: (m ? m[2] : first).trim(),
+      raw: tds[0] || '',
+      mark,
+      name,
       ms: tds[1] || '',
       note: tds[2] || '',
     };
@@ -63,7 +69,6 @@ _EXTRACT_JS = r"""
     title: document.title,
     url: location.href,
     tests,
-    // 供人工复核:把页面上的原始汇总文本也留下
     bodyText: norm(document.body.innerText).slice(0, 20000),
     htmlBytes: document.documentElement.outerHTML.length,
   };
@@ -75,7 +80,10 @@ _EXTRACT_JS = r"""
 def _status_of(mark: str) -> str | None:
     if not mark:
         return None
-    return _EMOJI_STATUS.get(mark) or _EMOJI_STATUS.get(mark[0])
+    m = mark.replace("\ufe0f", "").strip()  # 去掉变体选择符(⚪️ → ⚪)
+    if not m:
+        return None
+    return _EMOJI_STATUS.get(m) or _EMOJI_STATUS.get(m[0])
 
 
 def _classify(tests: list[dict]) -> str:
@@ -124,9 +132,11 @@ def run(br) -> tuple[str, dict]:
     return _classify(tests), detail
 
 
-register_site(Site(
-    name="bot-detector",
-    url=URL,
-    run=run,
-    note="逐项探测 CDP 的页面可观测痕迹;判定用站点自身的红/黄/绿状态符号",
-))
+register_site(
+    Site(
+        name="bot-detector",
+        url=URL,
+        run=run,
+        note="逐项探测 CDP 的页面可观测痕迹;判定用站点自身的红/黄/绿状态符号",
+    )
+)

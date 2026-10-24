@@ -13,10 +13,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 PROBE_VERSION = "0.1.0"
 PROBE_DIR = Path(__file__).resolve().parent
@@ -35,13 +36,14 @@ class ProbeError(RuntimeError):
 
 # ---- 出口 ------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Egress:
     """一个固定的出网条件。**必须固定** —— 轮换出口会让对照失效(见 probe/README.md §二)。"""
 
     name: str
-    proxy: str | None          # None = 直连;否则 "socks5://host:port"
-    kind: str                  # "direct" | "datacenter"
+    proxy: str | None  # None = 直连;否则 "socks5://host:port"
+    kind: str  # "direct" | "datacenter"
     note: str = ""
 
 
@@ -62,6 +64,7 @@ EGRESSES: dict[str, Egress] = {
 
 
 # ---- 被测对象 --------------------------------------------------------------
+
 
 @dataclass
 class LaunchSpec:
@@ -85,6 +88,8 @@ class BrowserFacade(Protocol):
 
     name: str
 
+    # `js` 一律是**函数表达式字符串**(如 `() => document.title` / `async () => {...}`),
+    # 各适配器自行适配底层语义(ego 需要包 IIFE,见 probe/targets/ego.py)。
     def goto(self, url: str, *, wait_until: str = "load", timeout_ms: int = 60000) -> None: ...
     def eval(self, js: str) -> Any: ...
     def wait(self, ms: int) -> None: ...
@@ -96,6 +101,7 @@ class BrowserFacade(Protocol):
 
 # ---- 检测站 ----------------------------------------------------------------
 
+
 @dataclass
 class Site:
     """一个检测站。`run` 返回 (verdict, detail)。
@@ -106,11 +112,12 @@ class Site:
 
     name: str
     url: str
-    run: Callable[[BrowserFacade], "tuple[str, dict]"]
+    run: Callable[[BrowserFacade], tuple[str, dict]]
     note: str = ""
 
 
 # ---- 结果 ------------------------------------------------------------------
+
 
 @dataclass
 class Result:
@@ -134,7 +141,7 @@ class Result:
 # ---- 注册表 ----------------------------------------------------------------
 
 _TARGETS: dict[str, Callable[[LaunchSpec], Any]] = {}
-_SITES: dict[str, "Site"] = {}
+_SITES: dict[str, Site] = {}
 
 
 def register_target(name: str) -> Callable:
@@ -181,8 +188,6 @@ def load_all() -> None:
     import importlib
     import pkgutil
 
-    import probe
-
     for pkg_name in ("probe.targets", "probe.sites"):
         pkg = importlib.import_module(pkg_name)
         for mod in pkgutil.iter_modules(pkg.__path__):
@@ -193,8 +198,9 @@ def load_all() -> None:
 
 # ---- 公共小工具 ------------------------------------------------------------
 
+
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def json_dump(path: Path, obj: Any) -> None:
@@ -207,4 +213,4 @@ def json_dump(path: Path, obj: Any) -> None:
 
 
 def run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return datetime.now(UTC).strftime("%Y%m%d-%H%M%S")

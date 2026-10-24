@@ -32,7 +32,8 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 from probe.base import LaunchSpec, register_target
 
@@ -40,16 +41,16 @@ from ._playwright_facade import PlaywrightFacade
 
 # Playwright 默认参数里,会被检测站点名、且我们不需要的那几个
 HARDENED_IGNORE_DEFAULTS: list[str] = [
-    "--disable-ipc-flooding-protection",   # 300/300 replaceState 全过 → 一眼假
-    "--disable-popup-blocking",             # 无点击即弹窗
-    "--enable-unsafe-swiftshader",          # 强制软件 WebGL → 一眼假
+    "--disable-ipc-flooding-protection",  # 300/300 replaceState 全过 → 一眼假
+    "--disable-popup-blocking",  # 无点击即弹窗
+    "--enable-unsafe-swiftshader",  # 强制软件 WebGL → 一眼假
 ]
 
 # 我们自己的参数
 HARDENED_ARGS: list[str] = [
     "--no-first-run",
     "--no-default-browser-check",
-    "--disable-blink-features=AutomationControlled",   # navigator.webdriver = false
+    "--disable-blink-features=AutomationControlled",  # navigator.webdriver = false
     # 覆盖 Playwright 那一长串默认 --disable-features(它含 ThirdPartyStoragePartitioning,
     # 会让第三方存储分区失效)。我们的参数在默认参数之后追加 → 后出现的开关生效。
     "--disable-features=Translate,BackForwardCache",
