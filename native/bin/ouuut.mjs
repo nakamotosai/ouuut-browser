@@ -30,6 +30,7 @@ import { readFile } from "node:fs/promises";
 import { createOuUutRuntime } from "../binding/ouuut-runtime.mjs";
 import { createTaskSpaceRegistry } from "../binding/task-spaces.mjs";
 import { openSessionProfiles } from "../binding/session-profiles.mjs";
+import { assertProxyUsable } from "../binding/proxy.mjs";
 import { parseArgs, buildBrowserArgs, USAGE } from "./launch-args.mjs";
 
 /**
@@ -187,6 +188,17 @@ export async function cli({
   if (opts.error) {
     process.stderr.write(`[ouuut] ${opts.error}\n\n${USAGE}\n`);
     return 2;
+  }
+  // 代理在**起浏览器之前**校验:形状非法与带凭据都要在这里就被挡住 ——
+  // 此前浏览器级这条路什么都不校验,非法串/带凭据串都能照常起会话,直到导航时才以网络错暴露
+  // (2026-10-25 实测);而带凭据的串 Chromium **两条路都不收**(坑-41),留着只会让用户困惑。
+  if (opts.proxy) {
+    try {
+      assertProxyUsable(opts.proxy);
+    } catch (err) {
+      process.stderr.write(`[ouuut] ${err?.message ?? err}\n`);
+      return 2;
+    }
   }
   // 脚本从 stdin 读(`ouuut nodejs < script`)。**在读之前不要起浏览器** ——
   // 免得因为脚本为空白起一次浏览器(而硬杀的浏览器会锁住 chrome.dll,见坑-23)。

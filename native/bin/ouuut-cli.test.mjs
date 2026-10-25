@@ -10,6 +10,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
+import os from "node:os";
 import { spawn } from "node:child_process";
 
 import { withRuntime, cli } from "./ouuut.mjs";
@@ -332,8 +333,9 @@ test("★ real + --proxy:能起会话,且出口走浏览器级(档案层收不�
   };
   const DIR_FLAG = ["--user-data", "dir"].join("-");
   try {
+    // 免认证代理(带凭据的那种现在被**早拒**,见下一条用例)
     const rc = await cli({
-      argv: ["nodejs", "--profile-kind", "real", DIR_FLAG, dir, "--proxy", "socks5://u:p@h:1080"],
+      argv: ["nodejs", "--profile-kind", "real", DIR_FLAG, dir, "--proxy", "socks5://127.0.0.1:1080"],
       spawn: spySpawn,
       // 脚本直接返回,别真跑 harness:我们只关心"会话起得来 + 参数怎么分流"
       runScript: async () => 0,
@@ -341,7 +343,7 @@ test("★ real + --proxy:能起会话,且出口走浏览器级(档案层收不�
     });
     assert.equal(rc, 0, "real + --proxy 必须能起会话(此前被库层抛死)");
     assert.ok(
-      captured.args.some((a) => a.startsWith("--proxy-server=socks5://u:p@h:1080")),
+      captured.args.some((a) => a.startsWith("--proxy-server=socks5://127.0.0.1:1080")),
       `real 的出口必须走浏览器级:${captured.args.join(" ")}`,
     );
     assert.ok(
@@ -349,6 +351,38 @@ test("★ real + --proxy:能起会话,且出口走浏览器级(档案层收不�
       "real 不建 context(也就不会碰 context 级代理)",
     );
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("★ 带凭据的 --proxy:必须**早失败**,而不是起会话、导航时才炸(且不许多带凭据的串进日志)", async (t) => {
+  const { mkdir, rm } = await import("node:fs/promises");
+  const dir = path.join(os.tmpdir(), `ouuut-cli-cred-${process.pid}-${Date.now()}`);
+  await mkdir(dir, { recursive: true });
+  const DIR_FLAG = ["--user-data", "dir"].join("-");
+  const SECRET = "QzCredPw";
+  // CLI 的早失败走 `process.stderr.write`(与"空脚本""读不到脚本"同一个风格),所以在进程级截它
+  const printed = [];
+  const realWrite = process.stderr.write;
+  process.stderr.write = (chunk) => {
+    printed.push(String(chunk));
+    return true;
+  };
+  try {
+    const rc = await cli({
+      argv: ["nodejs", DIR_FLAG, dir, "--proxy", `socks5://user:${SECRET}@h:1080`],
+      spawn: () => {
+        throw new Error("不该走到起浏览器这一步:带凭据的代理必须在校验处就被拒");
+      },
+      runScript: async () => 0,
+      stdout: { write() {} },
+    });
+    assert.equal(rc, 2, "带凭据的代理要**早失败**(非零码),不许「照常跑」");
+    const msg = printed.join("\n");
+    assert.ok(/凭据/.test(msg), `要告诉用户原因(是参数问题,不是网络问题):${msg}`);
+    assert.ok(!msg.includes(SECRET), `拒绝的理由里也不许带口令:${msg}`);
+  } finally {
+    process.stderr.write = realWrite;
     await rm(dir, { recursive: true, force: true });
   }
 });

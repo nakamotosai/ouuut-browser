@@ -170,6 +170,32 @@ export function scrubKnownProxies(text, raws = []) {
 }
 
 /**
+ * 校验一条**要交给浏览器用**的代理串:形状必须合法,**并且不许带凭据**。
+ *
+ * 为什么连凭据也拒(而不是"留着说不定以后支持"):2026-10-25 实测(见 `docs/坑与解法.md` 坑-41),
+ * Chromium 156 对带凭据的串**两条路都不收** —— 浏览器级 `--proxy-server=` 与 context 级
+ * `Target.createBrowserContext({proxyServer})` 都报 `net::ERR_NO_SUPPORTED_PROXIES`。
+ * 放过去的代价是"会话起得来、导航时才炸",用户完全看不出是参数的错;
+ * 而凭据本身**不会**因此变安全:它照样进诊断(stderr/启动参数),所以我们照样要抹它。
+ * ⇒ 在这里早失败,并且把"该怎么办"说清楚。
+ *
+ * 抛错文本已脱敏(走 `forceRedactProxyValue`),不会把用户给的口令打进日志。
+ * 这是**唯一**的判据入口:浏览器级、context 级、档案簿记三条路都调它,免得各写一份判断(会漂)。
+ */
+export function assertProxyUsable(url) {
+  const parsed = parseProxy(url); // 形状不合法时这里就抛(文本已脱敏)
+  if (parsed && parsed.hasCredentials) {
+    throw new ProxyError(
+      "浏览器不接受带凭据的代理串(2026-10-25 实测:浏览器级与 context 级都报 ERR_NO_SUPPORTED_PROXIES," +
+        "见 docs/坑与解法.md 坑-41):请改用免认证出口(IP 白名单 / tailnet / 本机 socks)。" +
+        "带凭据的串不会生效,只会进诊断 —— 所以这里直接拒绝。",
+      "OUUUT_PROXY_CREDENTIALS_UNSUPPORTED",
+    );
+  }
+  return parsed;
+}
+
+/**
  * 启动参数数组 → **可打印**的一行(代理凭据脱敏)。诊断/报错一律用这个。
  *
  * `--proxy-server=<值>` 走**结构化**脱敏(`redactProxyValue`):这个值是我们自己拼的、已知是代理串,

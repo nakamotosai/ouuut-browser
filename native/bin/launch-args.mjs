@@ -19,7 +19,7 @@
 
 import path from "node:path";
 
-import { PROXY_BYPASS_LIST } from "../binding/proxy.mjs";
+import { PROXY_BYPASS_LIST, assertProxyUsable } from "../binding/proxy.mjs";
 import os from "node:os";
 
 // 三种档案的**唯一来源**是档案引擎 —— 另抄一份迟早会漂(F3 的 kind 就是那三个)
@@ -351,6 +351,9 @@ export function buildBrowserArgs(opts = {}, env = {}) {
   //  * `real` / 没选 kind —— 默认 context 挂不了 context 级代理,只能走浏览器级。
   const proxyPerContext = opts.profileKind === "persona" || opts.profileKind === "disposable";
   if (opts.proxy && !proxyPerContext) {
+    // 形状非法 / 带凭据都在这里**早失败**(浏览器级这条路此前什么都不校验:
+    // 非法串与带凭据串都能照常起会话,只在导航时以网络错暴露 —— 2026-10-25 实测)。
+    assertProxyUsable(opts.proxy);
     args.push(`--proxy-server=${opts.proxy}`);
     args.push(`--proxy-bypass-list=${PROXY_BYPASS_LIST}`);
   }

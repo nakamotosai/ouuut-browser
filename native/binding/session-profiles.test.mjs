@@ -272,15 +272,27 @@ test("★ persona 的出口绑在 context 上(proxyServer + 绕过列表)", asyn
   assert.equal(listed.proxy, proxy);
 });
 
-test("★ 带凭据的代理:档案只暴露脱敏形式,原文不给外面看", async (t) => {
-  const { cdp, dir } = boot(t);
-  const session = await openSessionProfiles({
-    cdp, kind: "persona", userDataDir: path.join(dir, "profile"),
-    proxy: "socks5://user:SECRET@proxy.example:1080",
-  });
-  const listed = session.profiles.find((p) => p.id === session.sessionProfileId);
-  assert.equal(listed.proxy, "socks5://***@proxy.example:1080", "对外必须是脱敏串");
-  assert.ok(!JSON.stringify(session.profiles).includes("SECRET"), "整个 profiles 列表里都不许有凭据");
+test("★ 带凭据的代理:档案层直接**拒绝**(而不是留着一份用不上的口令)", async (t) => {
+  // 2026-10-25 实测:Chromium 两条路都不收带凭据的代理串(坑-41),所以"把凭据存进档案、只对外脱敏"
+  // 这个设计前提不成立了 —— 存了也用不上,还多一处口令落点。改成**共用校验**直接拒。
+  const { cdp, commands, dir } = boot(t);
+  let err = null;
+  try {
+    await openSessionProfiles({
+      cdp, kind: "persona", userDataDir: path.join(dir, "profile"),
+      proxy: "socks5://user:SECRET@proxy.example:1080",
+    });
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err, "带凭据的代理必须被拒");
+  assert.equal(err.error_code, "OUUUT_PROXY_CREDENTIALS_UNSUPPORTED", `错误码要能分辨原因:${err.message}`);
+  assert.ok(!err.message.includes("SECRET"), `拒绝的理由里也不许带口令:${err.message}`);
+  assert.ok(/凭据|免认证/.test(err.message), `要说清怎么办:${err.message}`);
+  assert.ok(
+    !commands().some((c) => c.method === "Target.createBrowserContext"),
+    "被拒时要**先拒后动**:不该已经建了带代理的 context(那等于先把口令交给浏览器)",
+  );
 });
 
 test("★ real + 代理:必须报错,不许静默忽略(默认 context 挂不了 context 级代理)", async (t) => {

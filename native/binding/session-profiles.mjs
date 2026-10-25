@@ -36,7 +36,7 @@
 // (见 `ouuut-runtime.mjs` 里 `archive` 缺席时那条路)。
 
 import { createArchive, KINDS, ArchiveError, INVALID_ARGUMENT } from "./archive.mjs";
-import { parseProxy, PROXY_BYPASS_LIST } from "./proxy.mjs";
+import { assertProxyUsable, PROXY_BYPASS_LIST } from "./proxy.mjs";
 
 /** 会话里 `real` 档案的簿记 id —— 它是机器上恰好一个的默认档案,由 `--user-data-dir` 决定。 */
 const REAL_PROFILE_ID = "real";
@@ -92,7 +92,8 @@ export async function openSessionProfiles({
 
   const definitions = [];
   // 代理串在这里校验一次:`real` 用不上它(默认 context 挂不了),所以只给被选中的 kind。
-  const parsedProxy = parseProxy(proxy);
+  // 走**共用**校验:形状非法与带凭据都早失败(凭据串 Chromium 两条路都不收,坑-41)。
+  const parsedProxy = assertProxyUsable(proxy);
 
   // `real` 恒为默认那一档。**给了档案目录**时它就在会话里(它代表这个 user-data-dir 的默认身份);
   // 没给目录 = 会话用的是本次会话专用的临时目录,那里的默认 context **不是**使用者的真实身份,
@@ -134,7 +135,7 @@ export async function openSessionProfiles({
     // persona 要**留在** user-data-dir 里(长期画像),disposable 用完即弃 —— 差别就在这一个布尔。
     const created = await cdp.send("Target.createBrowserContext", {
       disposeOnDetach: kind === "disposable",
-      // **出口绑在这个 context 上**(F13)。凭据会经这里交给浏览器 —— 不要打印它。
+      // **出口绑在这个 context 上**(F13)。值由 `assertProxyUsable()` 校验过(不免凭据),别打印它。
       ...(parsedProxy
         ? { proxyServer: parsedProxy.chromeValue, proxyBypassList: PROXY_BYPASS_LIST }
         : {}),
@@ -151,7 +152,7 @@ export async function openSessionProfiles({
       name: nickname,
       kind,
       browserContextId: contextId,
-      proxy: parsedProxy ? parsedProxy.raw : null, // 档案簿记里保留原文,但 listProfiles 只暴露脱敏形式
+      proxy: parsedProxy ? parsedProxy.chromeValue : null, // 已校验(无凭据);对外形状见 archive 的 `proxy`(只给可打印形式)
     });
     sessionProfileId = id;
     if (kind === "disposable") disposableContextId = contextId;

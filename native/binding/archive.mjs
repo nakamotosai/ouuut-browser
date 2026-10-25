@@ -36,7 +36,7 @@
 // **`real` 的特殊性**:它是使用者的真实身份。agent 能**读到它的存在**(否则不能告诉用户
 // "别在 real 里跑任务"),但**不能创建第二个、不能销毁它** —— 这两条做成硬错误。
 
-import { parseProxy, redactProxy } from "./proxy.mjs";
+import { assertProxyUsable, redactProxy } from "./proxy.mjs";
 
 /** 三种 kind,顺序即文档顺序。 */
 export const KINDS = Object.freeze(["real", "persona", "disposable"]);
@@ -111,14 +111,14 @@ function normalizeProfile(raw, index) {
   // ⇒ real 的簿记值恒为 `null`(语义:**省略**),**不接受**调用方传字符串进来 ——
   //   传了不会"更严格",只会让真机报错(这正是 2026-10-25 接线时发现的缝隙)。
   // **按档案绑代理**(F13):代理串在这里就校验,别拖到 launch 才炸。
-  // 对外(listProfiles)只给**脱敏**形式;原文留在 `_proxy` 里,只给"丢给浏览器"那一步用。
-  const proxy = parseProxy(raw.proxy ?? null);
+  // 凭据串在 `assertProxyUsable()` 那一步就被拒了(Chromium 两条路都不收,坑-41),
+  // 所以档案里**只留可打印形式**就够:不会再有"原文 vs 脱敏"两份(此前那个 `_proxy` 字段写了没人读,已删)。
+  const proxy = assertProxyUsable(raw.proxy ?? null);
   const isReal = kind === "real";
   return Object.freeze({
     id,
     name,
     proxy: proxy ? proxy.redacted : null,
-    _proxy: proxy ? proxy.raw : null,
     kind,
     isDefault: isReal,
     // 内部簿记,不出现在 listProfiles() 的对外形状里
