@@ -108,16 +108,18 @@ export function createRefAllocator({ startAt = 1 } = {}) {
       const refId = next;
       next += 1;
       assigned.set(k, refId);
-      byRefId.set(refId, {
-        refId,
-        backendNodeId,
-        frameId: frameId ?? null,
-        role: role ?? null,
-        name: name ?? null,
-        // OOPIF 的节点在**另一个 target** 上,后续动作必须带这个 session 才路由得到。
-        // 同进程 frame 这里是 null(走主 session 就行)。
-        ...(sessionId ? { sessionId } : {}),
-      });
+      // ⚠️ **缺省字段一律「省略」,不许填 `null`** —— harness 的 `validatePageRefState()`
+      //     (page-ref-registry.js)只接受 `string | undefined`,填 `null` 会让它判整个 ref 状态非法,
+      //     于是 `page.snapshot()` 抛 `Invalid persisted Page refs; take a new snapshot`
+      //     (2026-10-25 实证:`restore()` 用 null 抛、用 undefined 过)。见坑-42。
+      const record = { refId, backendNodeId };
+      if (frameId !== null && frameId !== undefined) record.frameId = frameId;
+      if (role !== null && role !== undefined) record.role = role;
+      if (name !== null && name !== undefined) record.name = name;
+      // OOPIF 的节点在**另一个 target** 上,后续动作必须带这个 session 才路由得到。
+      // 同进程 frame 这里没有这个键(走主 session 就行)。
+      if (sessionId) record.sessionId = sessionId;
+      byRefId.set(refId, record);
       return refId;
     },
 

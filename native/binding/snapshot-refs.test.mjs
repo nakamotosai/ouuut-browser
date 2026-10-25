@@ -209,3 +209,41 @@ test("空流 → 0 条,不假装通过也不假装有问题", () => {
   assert.equal(auditSnapshotPhase([]).total, 0);
   assert.equal(auditSnapshotPhase(null).total, 0);
 });
+
+// ---- 接缝:harness 的持久化校验(2026-10-25 坑-42)--------------------------
+//
+// `page.snapshot()` 曾经抛 `Invalid persisted Page refs; take a new snapshot`:
+// harness 的 `validatePageRefState()` 只接受 `string | undefined`,而我们给缺省字段填了 **`null`**。
+// 这条用例把**原生产出的 refs** 真的喂进 harness 那条路(merge -> exportState -> restore),
+// 免得"我们改了字段形状却没人在接缝处发现"再发生一次。
+const HARNESS_REF_REGISTRY = new URL(
+  "../../harness/package/ego-browser/dist/src/page-ref-registry.js",
+  import.meta.url,
+).href;
+
+test("★ 接缝:原生 refs 必须能过 harness 的 validatePageRefState(缺省字段不许填 null)", async () => {
+  const { PageRefRegistry, validatePageRefState } = await import(HARNESS_REF_REGISTRY);
+  const tree = n("root", 1, [n("button", 21, [], "主按钮"), n("text", 22, [], "一段正文"), n("anchor", 23)]);
+  const alloc = createRefAllocator();
+  assignRefs(tree, { allocator: alloc }); // frameId 缺省:以前这里会写成 null
+  const refs = Object.values(alloc.snapshot());
+  assert.ok(refs.length >= 2, `前提:这棵树该拿到 ref,实际 ${refs.length}`);
+
+  for (const r of refs) {
+    for (const [k, v] of Object.entries(r)) {
+      assert.notEqual(v, null, `ref.${k} 是 null —— harness 只接受 string | undefined,会判整份 refs 非法`);
+    }
+  }
+
+  const reg = new PageRefRegistry();
+  reg.merge("T1", refs);
+  const state = reg.exportState("T1");
+  assert.ok(state.refs.length > 0, "前提:harness 真收下了这些 ref(否则这条用例是空跑)");
+  assert.doesNotThrow(() => validatePageRefState(state), "harness 的持久化校验必须放行");
+  assert.doesNotThrow(() => reg.restore("T1", state), "往返(导出再导入)也必须放行");
+  assert.deepEqual(
+    state.refs.map((r) => Number(r.refId)).sort((a, b) => a - b),
+    refs.map((r) => r.refId).sort((a, b) => a - b),
+    "编号要对得上(harness 允许重编号,但这里不该发生)",
+  );
+});
