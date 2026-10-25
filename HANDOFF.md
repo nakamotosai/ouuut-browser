@@ -61,9 +61,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 1. **`ouuut.auditWebrtc()` 真跑** —— 逻辑有单测,真浏览器里的候选地址没采过。
 2. **自动更新真链路** —— `applyUpdate()` 有单测(原子性、哈希、回滚),没对真服务端跑过一次。
 3. **真服务器三种档案** —— 机器**已经有了**:`vps-jp` = 真 Ubuntu 24.04.5 aarch64(4 vCPU / 24 GB / Node v24.22.1,
-   `chromium` snap 与 `docker` 已装)。**缺的是 POSIX 通道分支(代码工作)**,见 `docs/下一步方案.md` P1 / P2。
-   Linux 基线已实测:把 `HEAD` 打成 tar 传过去 `node --test` = **`306 条 / 298 过 / 2 红 / 6 跳过`**,
-   红的 2 条全在通道片(`native/binding/cdp-pipe.test.mjs:186`、`native/binding/task-spaces.test.mjs:167`,均 `ECONNRESET`)。
+   `chromium` **156.0.8078.47** snap 与 `docker` 已装)。
+   ✅ **通道这一关已过**(P1,2026-10-25):Linux 回归 `306 条 / 300 过 / 0 红 / 6 跳过`(改前 `298 / 2 红`),
+   **真 Chromium 在 Linux 上跑通**(快照 397 字符,含 `hello ouuut` / `pay now` / `[frame …]`),
+   `ss -ltnp` 4 次采样**零监听套接字**。
+   ❌ **仍差的是「三种档案」那一步**(P2):`--profile-kind real|persona|disposable` 在 Linux 上各起一次。
 4. **第三方机器从零构建** —— **没有第二台物理机**(ADR-016)。替代三层:`R1` 异盘符/异路径/异用户变体(本机,~4 小时机时)→
    `R2` Hyper-V 干净 Windows VM → `R3` 公开后由真第三方跑(兜底)。**R2 没做就照实记未完成;R1 不许冒充 R2。**
 5. **分发形态** —— 0.1.3 的 payload 里 **`*.mjs` = 0 个**:JS 跑的是仓库侧 `native/`。
@@ -76,24 +78,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 
 ## Next safe action(只做这一件)
 
-**P1 · 给通道补 POSIX 分支**(定义与判据见 `docs/下一步方案.md` P1)—— 它是 P2 / P8 两条验收的前置:
+**`P2` · 在 `vps-jp` 上把三种档案各起一次**(定义与判据见 `docs/下一步方案.md` P2)。
+通道已通、真浏览器已在 Linux 上跑过,这次只差**档案维度**。
+
+远端已经备好的东西(**不必重做**):`/tmp/ouuut-p1/` 里是一份可跑的检出,且额外塞了
+**harness 的 `dist/` + `node_modules/acorn`** —— harness 的 `dist/` **不入版本控制**,
+`git archive` 出来的副本是缺的,缺了 CLI 会走不通(那 4 条 `harness dist 未构建` 的 skip 就是这个原因)。
 
 ```bash
-# 1) 本机:把传输抽成接口,新增 POSIX 实现(上游 POSIX 侧是 fd 3 读 / fd 4 写),
-#    Windows 命名管道保留为另一个实现;不要把同一段逻辑抄两遍
-node --test native/binding/*.test.mjs native/bin/*.test.mjs     # 期望仍是 306/306(不许为 Linux 弄红 Windows)
-# 2) vps-jp:打包 tracked 树传过去跑,期望从「306/298 过/2 红/6 跳过」变成 306/306
+# 本机 → 远端(每次改了代码都这样同步)
 git archive --format=tar HEAD -o /tmp/ouuut-head.tar
 scp /tmp/ouuut-head.tar vps-jp:/tmp/
-ssh vps-jp 'rm -rf /tmp/ouuut-linuxcheck && mkdir -p /tmp/ouuut-linuxcheck \
-  && tar -xf /tmp/ouuut-head.tar -C /tmp/ouuut-linuxcheck && cd /tmp/ouuut-linuxcheck \
-  && node --test native/binding/*.test.mjs native/bin/*.test.mjs'
+ssh vps-jp 'rm -rf /tmp/ouuut-p1 && mkdir -p /tmp/ouuut-p1 && tar -xf /tmp/ouuut-head.tar -C /tmp/ouuut-p1'
+cd harness/package/ego-browser && tar -czf /tmp/ouuut-harness-dist.tgz dist node_modules/acorn
+scp /tmp/ouuut-harness-dist.tgz vps-jp:/tmp/
+ssh vps-jp 'tar -xzf /tmp/ouuut-harness-dist.tgz -C /tmp/ouuut-p1/harness/package/ego-browser'
+
+# 远端:跑冒烟(脚本在 /tmp/ouuut-p1/run-smoke.sh,它设 OUUUT_BROWSER 并把脚本喂给 CLI)
+sh /tmp/ouuut-p1/run-smoke.sh
 ```
 
-跑通了就把结果贴进 `docs/里程碑.md` M5 并删掉对应条目。
-**踩坑先看** `docs/坑与解法.md` **坑-26**(挂在 fd 3 上的「待决读」会拖着进程不退,与平台无关)与
-**坑-29**(Windows 侧三个坑:提权 / overlapped / 写端 fd 模式)。
-远端**用脚本文件**调起,不要把启动参数摊在自己的命令行里(本机 shell 侧的浏览器参数守卫会拦 `--user-data-dir` 这类字面量)。
+**判据**:三种档案各拿到真快照;三种档案的目录**互不重叠**;`ss -ltnp` 仍**零监听**。
+
+**三条硬提醒**:
+1. `--profile-kind real` **必须**同时给档案目录(给不出来就报错,这是设计,别绕);
+2. `file://` 被测页面必须放 **`$HOME` 下** —— snap 有私有 `/tmp`,`/tmp` 里的文件浏览器读不到(坑-32);
+3. 启动参数别摊在命令行里逐字写:写进 `.sh` 再执行(本机 shell 侧有浏览器参数守卫,会拦 `--user-data-dir` 这类字面量)。
 
 ---
 
@@ -192,3 +202,18 @@ ssh vps-jp 'rm -rf /tmp/ouuut-linuxcheck && mkdir -p /tmp/ouuut-linuxcheck \
 M5 段旧的「6 条 skip 是平台门」说法未随 M0 一起清除、P8 把两个不同 run 说成「同轮」,以及两处「已全部落地」措辞。
 **全部已改**;按「同一改动封顶 2 轮」的纪律不再派第三轮,余下核对由**事实比对**收尾(`grep` 行号、`ls` 目录、复算 grade)。
 两轮核验分身**都没改过任何文件**;两个远端**都还没推**。
+
+---
+
+## P1 记录(2026-10-25 晚):POSIX 通道分支
+
+| 项 | 内容 |
+|---|---|
+| **改了什么** | `native/binding/cdp-pipe.mjs`:传输层流的 `error` 统一走 `noteTransportError`(**只记不拒**),**读端 stdio[4] 与写端 stdio[3] 两端都挂**;`diagnoseExit()` 带上传输层错误;`exit` 时若已知传输层报过错,**不再等那 2 秒兜底** |
+| **根因** | POSIX 上 `child.stdio[3]` 没挂 `error`;对端一死它抛 `ECONNRESET` ⇒ **未捕获异常**,报错乱窜到别的用例上 ⇒ 一条根因伪装成两条无关失败(`cdp-pipe.test.mjs:186` + `task-spaces.test.mjs:167`)。记入 `docs/坑与解法.md` **坑-31** |
+| **Windows** | `306/306`(改前改后一致,0 跳过) |
+| **Linux** | `306 条 / 300 过 / 0 红 / 6 跳过`(改前 `298 过 / 2 红`) |
+| **真浏览器(Linux)** | `Chrome/156.0.8078.47` → `createTab` → 快照 **397 字符**,含 `heading "hello ouuut"` / `button "pay now"` / 真 `[frame …]`(OOPIF) |
+| **ADR-005** | `ss -ltnp` 连续 4 次采样,chromium / node **零监听套接字** |
+| 新坑 | **坑-31**(POSIX 写端流错误把诊断冲掉)、**坑-32**(snap 私有 `/tmp` ⇒ `file://` 页面报「couldn't be accessed」,页面要放 `$HOME`) |
+| **没做的** | 没有为「各平台对称」新增 POSIX 专属用例:Linux 上**整套 300 条本来就走 fd3/4**(含分帧/超时/竞态),再加对称用例只是重复 `docs/下一步方案.md` P1 里那条原定话术;该条已按实际改写 |
