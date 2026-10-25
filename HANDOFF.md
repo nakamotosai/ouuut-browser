@@ -170,8 +170,8 @@ ssh vps-jp 'rm -rf /tmp/ouuut-linuxcheck && mkdir -p /tmp/ouuut-linuxcheck \
 |---|---|
 | **`docs/下一步方案.md`(新)** | 剩余工作包 **P1–P12** 的定义 / 顺序 / 验收判据 + **单机替代验收路径**。新正本(索引第 13 条) |
 | `docs/决策记录.md` | 新增 **ADR-016 · 验收不依赖第二台物理机**(R1/R2/R3 三层替代 + `vps-jp` 作真服务器 + 不许冒充的硬条件) |
-| `docs/里程碑.md` | ① 顶部新增**「代码侧缺口登记」**(F13/F14/F6/F9/F8-shadow 五条);② **M0「未跑满」回写**(三条遗留已全部落地,带 run-id 与真实读数);③ M5 状态与未完成改写(机器已有 + Linux 基线实测);④ M7 未完成四条各带替代路径,补登「分发形态未定」 |
-| `docs/M0-结论.md` | 头部遗留行回写(正文本来就是对的,只有这行滞后) |
+| `docs/里程碑.md` | 1 顶部新增**「代码侧缺口登记」**(F13/F14/F6/F9/F8-shadow 五条);2 **M0「未跑满」回写**(三条遗留逐条改写,**其中两条的转述已按盘上产物改正**,带 run-id 与真实读数);3 M5 状态与未完成改写(机器已有 + Linux 基线实测);4 M7 未完成四条各带替代路径,补登「分发形态未定」 |
+| `docs/M0-结论.md` | 头部遗留行回写;§1.3 新增「判据与产物不一致」**补注**(033825 与 034257 等级相同却判出不同 verdict);§四 的 `creepjs` 行改为**待复核** |
 | `README.md` | 修掉**错误结论**「代码侧没有未完成项」;「唯一 next」换成 P1–P12 顺序;回归行补 Linux 基线 |
 | `docs/00-真相源索引.md` | 十二 → **十三真相源**,登记 `docs/下一步方案.md` |
 | `HANDOFF.md` | 本文件:Not verified 第 3/4/5 条改写 + 新增第 6 条;Next safe action 换成 **P1**;新增本节 |
@@ -186,3 +186,9 @@ ssh vps-jp 'rm -rf /tmp/ouuut-linuxcheck && mkdir -p /tmp/ouuut-linuxcheck \
 | 6 条 skip 的性质 | **2 条平台门**(`skip: process.platform !== "win32"` —— `cdp-pipe.test.mjs:250/264`)+ **4 条 `t.skip("harness dist 未构建")`**(`ouuut-runtime.test.mjs:59,70,83,94`) | `node --test` 的 TAP `# SKIP` 行 + `grep -n "t.skip" native/binding/ouuut-runtime.test.mjs` |
 | 本机可用的替代算力 | 24 逻辑核 / 32 GB RAM;`C:` ≈654 GB(系统盘,随用漂移)、`D:` 934.8 GB、**`E:` 5474.3 GB** 空闲;`vmcompute` 已 Running;Sandbox 未启用;WSL 未装发行版 | `Get-ComputerInfo` / `Get-PSDrive` / `Test-Path` |
 | POSIX 侧 fd 号(写计划前已核对,不是推测) | **fd 3 读 / fd 4 写** | `chromium/src/content/browser/devtools/devtools_agent_host_impl.cc:269-270`(`kReadFD`/`kWriteFD`,Windows 分支走 `--remote-debugging-io-pipes`) |
+
+**核验记录(第二轮,2026-10-25)**:第一轮抓到 **12 处失实**,修完再派一轮,又抓到 **3 处残留 + 4 处新错** ——
+`turnstile.py` 行号引错(实为 `_classify` 97-106 + 138-146)、`probe/out` 的目录账不平(17 个 run + 2 个非轮次 = 19,其中 15 份有矩阵)、
+M5 段旧的「6 条 skip 是平台门」说法未随 M0 一起清除、P8 把两个不同 run 说成「同轮」,以及两处「已全部落地」措辞。
+**全部已改**;按「同一改动封顶 2 轮」的纪律不再派第三轮,余下核对由**事实比对**收尾(`grep` 行号、`ls` 目录、复算 grade)。
+两轮核验分身**都没改过任何文件**;两个远端**都还没推**。
