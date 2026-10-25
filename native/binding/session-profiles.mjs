@@ -70,9 +70,15 @@ export async function openSessionProfiles({
   profileId = null,
   name = null,
   proxy = null,
+  /**
+   * **额外**档案(双档案双出口):`[{ id?, kind, name?, proxy? }]`。
+   * 每个都会拿到自己的 browser context(因而可以各自绑**不同出口**)。
+   * 页面归属由**当前任务空间**决定 —— 见 `ouuut-runtime.mjs` 的 `createTab`/`profileIdForNewPage`。
+   */
+  extraProfiles = [],
 } = {}) {
-  // 没选 kind:**不建浏览器 context,也不建档案引擎**。今天怎么跑,现在还怎么跑。
-  if (kind === null) {
+  // 没选 kind 且没有额外档案:**不建浏览器 context,也不建档案引擎**。今天怎么跑,现在还怎么跑。
+  if (kind === null && extraProfiles.length === 0) {
     return {
       archive: null,
       profiles: [FALLBACK_PROFILE],
@@ -80,7 +86,9 @@ export async function openSessionProfiles({
       dispose: async () => {},
     };
   }
-  if (!KINDS.includes(kind)) {
+  // ⚠️ `kind === null` 是**合法**的 —— 它表示"这次会话没有主档案,档案都从 `extraProfiles` 来"
+  // (双档案双出口那条路:用户只给 `--profiles`,不给 `--profile-kind`)。
+  if (kind !== null && !KINDS.includes(kind)) {
     throw new ArchiveError(
       `kind=${JSON.stringify(kind)} 不合法;只允许 ${KINDS.join(" / ")}`,
       INVALID_ARGUMENT,
@@ -109,8 +117,34 @@ export async function openSessionProfiles({
     });
   }
 
-  let sessionProfileId;
-  let disposableContextId = null;
+  let sessionProfileId = null;
+  const disposableContextIds = [];
+
+  /** 建一个 context 级档案(persona / disposable),返回它的定义。主档案与额外档案共用这一段。 */
+  async function createContextProfile({ kind: k, id, nickname, proxy: proxyRaw, label }) {
+    const parsed = assertProxyUsable(proxyRaw ?? null);
+    // persona 要**留在** user-data-dir 里(长期画像),disposable 用完即弃 —— 差别就在这一个布尔。
+    const created = await cdp.send("Target.createBrowserContext", {
+      disposeOnDetach: k === "disposable",
+      // **出口绑在这个 context 上**(F13)。值由 `assertProxyUsable()` 校验过(不免凭据),别打印它。
+      ...(parsed ? { proxyServer: parsed.chromeValue, proxyBypassList: PROXY_BYPASS_LIST } : {}),
+    });
+    const contextId = created?.browserContextId;
+    if (typeof contextId !== "string" || contextId === "") {
+      throw new ArchiveError(
+        `${label} 的 Target.createBrowserContext 没返回 browserContextId(收到 ${JSON.stringify(created)})`,
+        INVALID_ARGUMENT,
+      );
+    }
+    if (k === "disposable") disposableContextIds.push(contextId);
+    return {
+      id,
+      name: nickname,
+      kind: k,
+      browserContextId: contextId,
+      proxy: parsed ? parsed.chromeValue : null, // 已校验(无凭据);对外形状见 archive 的 `proxy`
+    };
+  }
 
   if (kind === "real") {
     // `parseArgs` 已经强制 real 必须给目录;这里再兜一次,免得别的入口绕过 CLI 传进来。
@@ -129,33 +163,48 @@ export async function openSessionProfiles({
         INVALID_ARGUMENT,
       );
     }
-  } else {
+  } else if (kind !== null) {
     const id = typeof profileId === "string" && profileId !== "" ? profileId : kind;
     const nickname = typeof name === "string" && name !== "" ? name : DEFAULT_NAMES[kind];
-    // persona 要**留在** user-data-dir 里(长期画像),disposable 用完即弃 —— 差别就在这一个布尔。
-    const created = await cdp.send("Target.createBrowserContext", {
-      disposeOnDetach: kind === "disposable",
-      // **出口绑在这个 context 上**(F13)。值由 `assertProxyUsable()` 校验过(不免凭据),别打印它。
-      ...(parsedProxy
-        ? { proxyServer: parsedProxy.chromeValue, proxyBypassList: PROXY_BYPASS_LIST }
-        : {}),
-    });
-    const contextId = created?.browserContextId;
-    if (typeof contextId !== "string" || contextId === "") {
+    // 传**原始串**:校验在 helper 里做一次(上面那次 `parsedProxy` 只用于 real 分支的「不许带代理」判断)
+    definitions.push(await createContextProfile({ kind, id, nickname, proxy, label: `档案 ${id}` }));
+    sessionProfileId = id;
+  }
+
+  // ---- 额外档案(双档案双出口)------------------------------------------------
+  // 每个额外档案都有自己的 browser context —— 因而可以各自绑**不同出口**、互不串味。
+  // `real` 只能有一个(它就是那个 user-data-dir 的默认身份,再来一个只会打架)。
+  const seenIds = new Set(definitions.map((d) => d.id));
+  for (const extra of extraProfiles ?? []) {
+    const k = extra?.kind;
+    if (!KINDS.includes(k)) {
       throw new ArchiveError(
-        `Target.createBrowserContext 没返回 browserContextId(收到 ${JSON.stringify(created)})`,
+        `额外档案的 kind=${JSON.stringify(k)} 不合法;只允许 ${KINDS.join(" / ")}`,
         INVALID_ARGUMENT,
       );
     }
-    definitions.push({
-      id,
-      name: nickname,
-      kind,
-      browserContextId: contextId,
-      proxy: parsedProxy ? parsedProxy.chromeValue : null, // 已校验(无凭据);对外形状见 archive 的 `proxy`(只给可打印形式)
-    });
-    sessionProfileId = id;
-    if (kind === "disposable") disposableContextId = contextId;
+    const id = typeof extra.id === "string" && extra.id !== "" ? extra.id : k;
+    if (seenIds.has(id)) {
+      throw new ArchiveError(`额外档案的 id ${JSON.stringify(id)} 与已有档案重名`, INVALID_ARGUMENT);
+    }
+    seenIds.add(id);
+    if (k === "real") {
+      if (!userDataDir) {
+        throw new ArchiveError("额外档案是 real 时必须给出档案目录(那是使用者的真实身份)", INVALID_ARGUMENT);
+      }
+      if (extra.proxy) throw new ArchiveError("额外档案 real 用默认 context,挂不了 context 级代理", INVALID_ARGUMENT);
+      definitions.push({ id, name: DEFAULT_NAMES.real, kind: "real" });
+      continue;
+    }
+    definitions.push(
+      await createContextProfile({
+        kind: k,
+        id,
+        nickname: typeof extra.name === "string" && extra.name !== "" ? extra.name : DEFAULT_NAMES[k],
+        proxy: extra.proxy ?? null,
+        label: `额外档案 ${id}`,
+      }),
+    );
   }
 
   const archive = createArchive({ profiles: definitions });
@@ -170,20 +219,22 @@ export async function openSessionProfiles({
      * 收尾:销毁 disposable 的 browser context。
      *
      * * **幂等** —— 收尾路径可能被走两次(正常结束 + 异常兜底),重复调用是常态,不该炸。
-     * * **绝不在 `real` 上动手** —— real 是使用者的真实身份,`disposableContextId` 对它恒为 null。
+     * * **绝不在 `real` 上动手** —— real 是使用者的真实身份(它压根不在这个名单里)。
      * * persona **不销毁** —— 长期画像要留在 user-data-dir 里(ADR-007)。
+     * * **多个** disposable(双档案时会同时存在)一个都不许漏 —— 漏一个就是"用完没弃"。
      */
     async dispose() {
       if (disposed) return;
       disposed = true;
-      if (!disposableContextId) return;
-      try {
-        await cdp.send("Target.disposeBrowserContext", { browserContextId: disposableContextId });
-      } catch (err) {
-        // 收尾阶段的失败不该盖住主流程的结果(浏览器可能已经死了)—— 记一行,别抛。
-        process.stderr.write(
-          `[session-profiles] 销毁 disposable context 失败:${err?.message ?? err}\n`,
-        );
+      for (const browserContextId of disposableContextIds) {
+        try {
+          await cdp.send("Target.disposeBrowserContext", { browserContextId });
+        } catch (err) {
+          // 收尾阶段的失败不该盖住主流程的结果(浏览器可能已经死了)—— 记一行,别抛。
+          process.stderr.write(
+            `[session-profiles] 销毁 disposable context 失败(${browserContextId}):${err?.message ?? err}\n`,
+          );
+        }
       }
     },
   };

@@ -37,18 +37,17 @@ test("★ core:走 harness 的页面模型(否则拿到的快照与 CLI 不是�
 });
 
 test("★ core:snapshot 两种形状都收(harness 给字符串;原生 api 那条给 {content, refs})", async () => {
-  const asString = createServeCore({ harness: fakeHarness(), api: fakeApi() });
+  const h1 = fakeHarness();
+  const asString = createServeCore({ harness: h1, api: fakeApi() });
   await asString.goto("https://x/");
   assert.ok((await asString.snapshot()).text.startsWith("[p2"));
 
-  const asObject = createServeCore({
-    harness: fakeHarness({
-      taskSpace: async () => ({
-        newPage: async () => ({ targetId: "T", goto: async () => {}, snapshot: async () => ({ content: "正文", refs: [{ refId: "1" }] }) }),
-      }),
+  const h2 = fakeHarness({
+    taskSpace: async () => ({
+      newPage: async () => ({ targetId: "T", goto: async () => {}, snapshot: async () => ({ content: "正文", refs: [{ refId: "1" }] }) }),
     }),
-    api: fakeApi(),
   });
+  const asObject = createServeCore({ harness: h2, api: fakeApi() });
   await asObject.goto("https://x/");
   assert.deepEqual(await asObject.snapshot(), { text: "正文", refs: 1 });
 });

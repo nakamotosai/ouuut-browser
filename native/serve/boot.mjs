@@ -35,6 +35,18 @@ export async function bootServeCore({ argv = [], env = process.env, spawn } = {}
     );
   }
 
+  // ⚠️ 服务端**不做**多档案:它要先起服务、再按请求开页,而 harness 建空间要求"恰好一个标签页";
+  // 预建多个空间还会把它的快照目标带偏(实测 `Page changed during snapshot`)。
+  // 与其做成半可用,不如明说:双档案双出口请走 CLI / 脚本那条路(已实测,见 tools/verify-dual-profile.mjs)。
+  if (Array.isArray(opts.extraProfiles) && opts.extraProfiles.length > 0) {
+    throw new ServeError(
+      "服务端目前只服务**一个**档案:harness 的任务空间要求「建空间时恰好一个标签页」," +
+        "按请求开页这条路做不到;预建多个空间又会把快照目标带偏。要双档案双出口请用 CLI:" +
+        "`node native/bin/ouuut.mjs nodejs --profiles '<json>' --script <脚本>`(见 docs/坑与解法.md 坑-47)。",
+      "OUUUT_SERVE_NO_MULTI_PROFILE",
+    );
+  }
+
   const session = await openSession({
     opts: { ...opts, namespace },
     env,
@@ -66,6 +78,7 @@ export async function bootServeCore({ argv = [], env = process.env, spawn } = {}
       api: session.api,
       spaceName: SERVE_SPACE_NAME,
     });
+
     return { server, opts, session, core, namespace };
   } catch (err) {
     await session.close();

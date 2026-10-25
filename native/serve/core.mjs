@@ -32,7 +32,15 @@ export function createServeCore({ harness, api, spaceName = "serve" } = {}) {
   return {
     pages,
 
-    /** 打开一个页面并等它加载完。 */
+    /**
+     * 打开一个页面并等它加载完。
+     *
+     * ⚠️ **一个服务端进程只服务一个档案**(就是这次会话的主档案)。
+     * 多档案(各自绑不同出口)在 **CLI / 脚本**那条路是可行的、也实测过(两个空间 + `taskSpace(name,{profileId})`),
+     * 但服务端这条路走不通:harness 的任务空间要求"建空间时浏览器恰好一个标签页",而服务端要先起服务再按请求开页;
+     * 且预建多个空间之后,它的页面模型会把快照认到别的文档上(实测 `Page changed during snapshot`)。
+     * ⇒ 与其做成半可用,不如在这里**明说**:要双档案请用 CLI 那条路。
+     */
     async goto(url, { timeoutMs } = {}) {
       if (typeof url !== "string" || url === "") throw new ServeError("goto 需要一个 url", "OUUUT_SERVE_BAD_ARGS");
       const space = await harness.taskSpace(spaceName);

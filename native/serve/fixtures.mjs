@@ -35,6 +35,9 @@ export function fakeHarness(overrides = {}) {
   const calls = [];
   return {
     calls,
+    async switchTaskSpace(id) {
+      calls.push({ op: "switchTaskSpace", id });
+    },
     async taskSpace(name) {
       calls.push({ op: "taskSpace", name });
       return {

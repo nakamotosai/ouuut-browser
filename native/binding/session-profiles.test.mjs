@@ -303,3 +303,55 @@ test("★ real + 代理:必须报错,不许静默忽略(默认 context 挂不了
     "静默忽略会让人以为绑上了",
   );
 });
+
+test("★ 双档案:一个会话开多个档案,各自绑自己的出口;收尾时 disposable 一个都不漏", async (t) => {
+  const { cdp, commands, dir } = boot(t);
+  const session = await openSessionProfiles({
+    cdp,
+    kind: "persona",
+    userDataDir: path.join(dir, "profile"),
+    extraProfiles: [
+      { id: "a-jp", kind: "persona", proxy: "socks5://198.51.100.7:41105" },
+      { id: "b-tmp", kind: "disposable" },
+    ],
+  });
+
+  const created = commands().filter((c) => c.method === "Target.createBrowserContext");
+  assert.equal(created.length, 3, "主档案 + 两个额外档案 —— 三个都要有自己的 context");
+  assert.deepEqual(
+    session.profiles.map((p) => p.id).sort(),
+    // `real` 也在:给了档案目录 ⇒ 它就是那个目录的默认身份(现有语义,不是这次新加的)
+    ["a-jp", "b-tmp", "persona", "real"],
+    `三个 context 档案 + real 都要登记:${JSON.stringify(session.profiles)}`,
+  );
+  const withProxy = created.filter((c) => c.params?.proxyServer);
+  assert.equal(withProxy.length, 1, "只有带 proxy 的那个档案绑出口(别的档案不许被顺手套上)");
+  assert.equal(withProxy[0].params.proxyServer, "socks5://198.51.100.7:41105");
+  assert.equal(
+    created.filter((c) => c.params?.disposeOnDetach === true).length,
+    1,
+    "只有 disposable 标 disposeOnDetach(persona 要留在 user-data-dir)",
+  );
+
+  await session.dispose();
+  const disposed = commands().filter((c) => c.method === "Target.disposeBrowserContext");
+  assert.equal(disposed.length, 1, "销毁的也只有 disposable 那一个");
+});
+
+test("双档案:重复 id / 非法 kind 要**早失败**(不许悄悄少建一个)", async (t) => {
+  const { cdp, dir } = boot(t);
+  await assert.rejects(
+    () =>
+      openSessionProfiles({
+        cdp,
+        kind: "persona",
+        userDataDir: path.join(dir, "profile"),
+        extraProfiles: [{ id: "persona", kind: "disposable" }],
+      }),
+    (e) => /重名/.test(e.message),
+  );
+  await assert.rejects(
+    () => openSessionProfiles({ cdp, kind: "persona", extraProfiles: [{ kind: "nope" }] }),
+    (e) => /不合法/.test(e.message),
+  );
+});

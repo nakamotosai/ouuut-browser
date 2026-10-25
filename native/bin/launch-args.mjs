@@ -54,6 +54,10 @@ export const USAGE = `ouuut —— 自带 Chromium 的 agent 浏览器
   --identity-country <cc> 画像的国家(如 jp / us)。给了它,启动时会**核对出口**(F6/P4)
   --egress-country <cc>   你**声明**的出口国家;与实测不符同样拒绝(声明不能与事实脱钩)
   --allow-egress-mismatch 明知不一致也放行(诊断里会标出来)
+  --profiles <json>       额外档案(双档案双出口),如
+                          '[{"id":"a","kind":"persona","proxy":"socks5://h:1080"},{"id":"b","kind":"disposable"}]'
+                          脚本里 taskSpace("x","a") 之后的页面就走 a 的档案与出口
+                          (USAGE 是模板字符串,所以这里不能用反引号)
   -h, --help              本帮助
 
 设计取舍(见 docs/补丁点位.md §三 与 ADR-005):
@@ -225,6 +229,31 @@ export function parseArgs(argv = []) {
       case "--allow-egress-mismatch":
         out.allowEgressMismatch = true;
         break;
+      case "--profiles": {
+        // 双档案双出口:一个会话里开多个档案,各自绑自己的出口。
+        // 用 **JSON** 而不是自定义分隔符:代理串里全是 `:` 和 `/`,自定义语法一定会歧义。
+        const v = next();
+        if (v === null) return out;
+        let arr;
+        try {
+          arr = JSON.parse(v);
+        } catch (err) {
+          out.error = `--profiles 不是合法 JSON:${err?.message ?? err}`;
+          return out;
+        }
+        if (!Array.isArray(arr)) {
+          out.error = '--profiles 要是一个数组,例如 [{"id":"a","kind":"persona","proxy":"socks5://h:1080"}]';
+          return out;
+        }
+        for (const e of arr) {
+          if (!e || typeof e !== "object" || typeof e.kind !== "string") {
+            out.error = '--profiles 的每一项都要是对象且带 "kind"';
+            return out;
+          }
+        }
+        out.extraProfiles = arr;
+        break;
+      }
       case "--profile-kind": {
         const v = next();
         if (v === null) return out;

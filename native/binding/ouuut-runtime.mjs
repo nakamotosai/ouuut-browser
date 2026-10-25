@@ -251,11 +251,34 @@ export function createOuUutRuntime({
     };
   };
 
+  /** 页 → 档案 的记账。 */
+  const tabProfile = new Map();
+
+  /**
+   * 「这张页属于哪个档案」——**双档案双出口的接线点**。
+   *
+   * 顺序:**显式给的**(`options.sessionProfileId`,HTTP/MCP 那条路用)> **当前选中的任务空间的档案**
+   * (harness 只给 url,所以脚本里 `taskSpace("a", "<profileId>")` 之后的 `newPage()` 走这条)>
+   * 会话的主档案(没建过空间时的兜底)。
+   *
+   * 为什么必须按空间来:一个会话里可以有多个档案(各自绑不同出口),页面落错 context 就等于
+   * 用 A 的身份走了 B 的出口 —— 那正是 2026-10-25 坑-40 的形态(参数配了、页面落在别处)。
+   */
+  function profileIdForNewPage(options = {}) {
+    if (typeof options?.sessionProfileId === "string" && options.sessionProfileId !== "") {
+      return options.sessionProfileId;
+    }
+    const fromSpace = spaces.selected?.profileId;
+    if (typeof fromSpace === "string" && fromSpace !== "") return fromSpace;
+    return sessionProfileId ?? null;
+  }
+
   /** `nav.ts:159-162` 只读 `result.targetId`,没有就抛「newTab returned no targetId」。 */
-  runtime.createTab = async function createTab(url = "about:blank") {
-    // ⚠️ **页面要建在会话档案自己的 context 里**,否则那个 context 绑的出口/隔离全落空。
+  runtime.createTab = async function createTab(url = "about:blank", options = {}) {
+    // ⚠️ **页面要建在对应档案自己的 context 里**,否则那个 context 绑的出口/隔离全落空。
     // (`real` 的 context id 是 `null` ⇒ 省略参数 = 默认 context,这是 Chrome 的寻址方式。)
-    const contextId = archive && sessionProfileId ? archive.browserContextFor(sessionProfileId) : null;
+    const profileId = profileIdForNewPage(options);
+    const contextId = archive && profileId ? archive.browserContextFor(profileId) : null;
     const res = await cdp.send(
       "Target.createTarget",
       { url, ...(contextId ? { browserContextId: contextId } : {}) },
@@ -264,8 +287,13 @@ export function createOuUutRuntime({
     if (typeof res?.targetId !== "string" || res.targetId.length === 0) {
       throw new OuUutRuntimeError("Target.createTarget 没返回 targetId", "OUUUT_CREATE_TAB_FAILED");
     }
+    // 记下"这张页属于谁" —— 给诊断与用例用(harness 不读它)。
+    if (profileId) tabProfile.set(res.targetId, profileId);
     return { targetId: res.targetId };
   };
+
+  /** 页 → 档案 的记账(诊断/用例用;不参与寻址)。 */
+  runtime.tabProfileOf = (targetId) => tabProfile.get(targetId) ?? null;
 
   // ---- 任务空间(契约逐字来自 harness 源码,见 task-spaces.mjs 顶部)----
   // `spaces` 在本函数顶部已绑定(可注入,便于测试)
@@ -326,6 +354,12 @@ export function createOuUutRuntime({
   runtime.createTaskSpace = async function createTaskSpace(name, profileId) {
     const created = spaces.create(name, profileId);
     spaces.select(created.id); // harness 期望"创建并选中"
+    // ⚠️ 空间**建的时候**就把档案绑上(`archive.bindTaskSpace`)—— 这是它唯一的**生产**调用方。
+    // 此前那条绑定只有用例、没有调用方 ⇒ 档案层"未绑定的空间不许读 cookie"那道防线实际上从没被用过。
+    // 键用 `taskId`(`space-<n>`,字符串、稳定):harness 看到的也是它。
+    if (archive && typeof profileId === "string" && profileId !== "") {
+      archive.bindTaskSpace(String(created.taskId ?? created.id), profileId);
+    }
     return created;
   };
 

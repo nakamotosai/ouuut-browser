@@ -63,6 +63,8 @@ export async function openSession({
       // 浏览器级 `--proxy-server` 承担(见 launch-args 的按 kind 分流);传进来只会被档案层抛死,
       // 于是出现"参数合法、会话起不来"的自相矛盾(2026-10-25 核验指出的 F3)。
       proxy: opts.profileKind === "persona" || opts.profileKind === "disposable" ? opts.proxy : null,
+      // 额外档案(双档案双出口):各带自己的 context ⇒ 各带自己的出口。
+      extraProfiles: Array.isArray(opts.extraProfiles) ? opts.extraProfiles : [],
     });
   } catch (err) {
     await cdp.close();

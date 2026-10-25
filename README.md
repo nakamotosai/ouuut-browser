@@ -48,6 +48,17 @@ node native/bin/ouuut.mjs nodejs --script 脚本.mjs [--headless]
 node <发布目录>/payload/ouuut.mjs nodejs --script 脚本.mjs [--headless]
 ```
 
+双档案双出口(一个会话里两个档案、各自绑自己的出口):
+
+```bash
+node native/bin/ouuut.mjs nodejs --headless \
+  --profiles '[{"id":"a","kind":"persona","proxy":"socks5://host:1080"},{"id":"b","kind":"disposable"}]' \
+  --script 脚本.mjs      # 脚本里 taskSpace("x", { profileId: "a" }) 之后的页面就走 a 的档案与出口
+```
+
+⚠️ 两个档案要**先在脚本开头**把空间都建好(harness 建空间时要求浏览器恰好一个标签页);
+服务端入口**只服务一个档案**,给 `--profiles` 会明确拒绝(见 `docs/坑与解法.md` 坑-47)。
+
 `--script` 也可以换成 stdin heredoc(`ouuut nodejs <<'JS' ... JS`)。代理、档案、窗口等开关见 `--help`。
 
 ### 三个入口(P5)

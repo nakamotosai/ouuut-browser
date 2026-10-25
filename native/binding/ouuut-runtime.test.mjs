@@ -267,3 +267,67 @@ test("★ probeEgressIp:必须把自检页建在**会话档案的 context** 里,
   const ev = sent.find((c) => c.method === "Runtime.evaluate");
   assert.equal(ev.params.returnByValue, true, "要的是值,不是远端对象");
 });
+
+// ---- 双档案双出口:页面归属接线(2026-10-25)----------------------------------
+
+test("★ createTaskSpace 带档案 ⇒ 档案层真的绑上(bindTaskSpace 的首个生产调用方)", async () => {
+  const { createOuUutRuntime } = await import("./ouuut-runtime.mjs");
+  const { createArchive } = await import("./archive.mjs");
+  const cdp = { onRaw: () => () => {}, send: async () => ({}), sendRaw: () => {} };
+  const archive = createArchive({
+    profiles: [
+      { id: "real", name: "真实", kind: "real" },
+      { id: "p-a", name: "画像 A", kind: "persona", browserContextId: "CTX-A" },
+    ],
+  });
+  const rt = createOuUutRuntime({ cdp, archive, sessionProfileId: "real", namespace: "ouuut" });
+  const space = await rt.api.createTaskSpace("带着档案的空间", "p-a");
+  assert.equal(space.profileId, "p-a");
+  // 绑定键是空间的 taskId(harness 看到的也是它)
+  assert.equal(archive.boundProfileOf(String(space.taskId)).id, "p-a", "空间必须真的绑到那个档案上");
+});
+
+test("★ createTab 按【当前空间的档案】选 context —— 双档案双出口的接线点", async () => {
+  const { createOuUutRuntime } = await import("./ouuut-runtime.mjs");
+  const { createArchive } = await import("./archive.mjs");
+  const sent = [];
+  const cdp = {
+    onRaw: () => () => {},
+    send: async (method, params) => {
+      sent.push({ method, params });
+      if (method === "Target.createTarget") return { targetId: `T-${sent.length}` };
+      return {};
+    },
+    sendRaw: () => {},
+  };
+  const archive = createArchive({
+    profiles: [
+      { id: "real", name: "真实", kind: "real" },
+      { id: "p-a", name: "画像 A", kind: "persona", browserContextId: "CTX-A" },
+      { id: "p-b", name: "画像 B", kind: "persona", browserContextId: "CTX-B" },
+    ],
+  });
+  // 会话主档案是 p-a;但**当前空间**是 p-b ⇒ 页面必须落到 CTX-B
+  const rt = createOuUutRuntime({ cdp, archive, sessionProfileId: "p-a", namespace: "ouuut" });
+  await rt.api.createTaskSpace("空间 B", "p-b");
+  const tab = await rt.api.createTab("https://x.example/");
+  const created = sent.find((c) => c.method === "Target.createTarget");
+  assert.equal(created.params.browserContextId, "CTX-B", "页面要落在**当前空间**的档案 context 里");
+  assert.equal(rt.api.tabProfileOf(tab.targetId), "p-b", "顺手记下这张页属于谁(诊断/用例用)");
+
+  // 显式给的优先于空间(HTTP/MCP 那条路要能点名单个档案)
+  const tab2 = await rt.api.createTab("https://y.example/", { sessionProfileId: "p-a" });
+  assert.equal(sent.filter((c) => c.method === "Target.createTarget").at(-1).params.browserContextId, "CTX-A");
+  assert.equal(rt.api.tabProfileOf(tab2.targetId), "p-a");
+
+  // 没有空间、也没显式给 ⇒ 会话主档案(老行为不变)
+  const rt2 = createOuUutRuntime({ cdp, archive, sessionProfileId: "p-a", namespace: "ouuut" });
+  await rt2.api.createTab("https://z.example/");
+  assert.equal(sent.filter((c) => c.method === "Target.createTarget").at(-1).params.browserContextId, "CTX-A");
+
+  // 空间档案是 real ⇒ **省略** browserContextId(默认 context 靠省略寻址)
+  const rt3 = createOuUutRuntime({ cdp, archive, sessionProfileId: "p-a", namespace: "ouuut" });
+  await rt3.api.createTaskSpace("真实身份的空间", "real");
+  await rt3.api.createTab("https://r.example/");
+  assert.ok(!("browserContextId" in sent.filter((c) => c.method === "Target.createTarget").at(-1).params));
+});
