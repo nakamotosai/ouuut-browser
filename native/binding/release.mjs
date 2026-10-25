@@ -309,7 +309,14 @@ export async function installRelease({
       await writeFile(target, buf);
     }
 
-    // 4) 一次性换名 —— 到这一步之前,目标位置什么都不存在
+    // 4) **把清单与签名留在安装目录里** —— 安装目录必须能回答"我是哪个版本"。
+    //    没有这一步,更新就无从计算(拿不到 when-current),而"我装的是 0.1.3 还是 0.1.4"
+    //    只能靠人记 —— 那正是更新链路最容易出错的地方。
+    await mkdir(path.join(staging, ".ouuut-release"), { recursive: true });
+    await writeFile(path.join(staging, ".ouuut-release", "manifest.json"), manifestBytes(manifest));
+    await writeFile(path.join(staging, ".ouuut-release", "manifest.sig"), signatureBase64 + "\n");
+
+    // 5) 一次性换名 —— 到这一步之前,目标位置什么都不存在
     await mkdir(path.dirname(dir), { recursive: true });
     await rename(staging, dir);
     return { installed: true, version: manifest.version, files: files.length };
