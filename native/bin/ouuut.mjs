@@ -42,7 +42,7 @@ import { parseArgs, buildBrowserArgs, USAGE } from "./launch-args.mjs";
  */
 export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.argv.slice(2), env = process.env } = {}) {
   const opts = parseArgs(argv);
-  const { exe, args } = buildBrowserArgs(opts, env);
+  const { exe, args, userDataDir, ephemeralUserDataDir } = buildBrowserArgs(opts, env);
 
   const cdp = spawn({
     exe,
@@ -110,9 +110,38 @@ export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.ar
       if (previous === undefined) delete globalThis.ouuut;
       else globalThis.ouuut = previous;
       await cdp.close();
+      // **用完即弃**:会话专用的临时档案目录不该留在磁盘上。
+      // (2026-10-25 核验实测:每跑一次 CLI 就留一个,`%TEMP%` 里累计到 88 个 —— 与 ADR-007 里
+      //  「disposable 用完即弃」的说法矛盾。)
+      // 顺序:必须在 `cdp.close()` **之后** —— 浏览器还在跑时删它的档案目录是白删/半删。
+      if (ephemeralUserDataDir) await removeSessionUserDataDir(userDataDir, opts.namespace);
     }
   }
   return result;
+}
+
+/**
+ * 删掉**本会话专用的**临时档案目录。
+ *
+ * **尽力而为,而且只报不抛**:浏览器刚退出时它的孙子进程可能还占着文件(坑-27),
+ * 为了一次清理失败把一场正常会话判成失败,不值得。
+ * ⚠️ 调用方显式给的档案目录**绝不删** —— 那是使用者的身份,由 `ephemeralUserDataDir` 把关。
+ */
+export async function removeSessionUserDataDir(dir, namespace = "ouuut") {
+  const { rm } = await import("node:fs/promises");
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 150 });
+      return true;
+    } catch (err) {
+      if (attempt === 3) {
+        process.stderr.write(`[${namespace}] 会话临时档案目录没清干净(${dir}):${err?.message ?? err}\n`);
+        return false;
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+  return false;
 }
 
 /**

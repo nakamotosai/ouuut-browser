@@ -349,5 +349,12 @@ export function buildBrowserArgs(opts = {}, env = {}) {
     }
   }
 
-  return { exe, args };
+  return {
+    exe,
+    args,
+    /** 本次会话实际用的档案目录(调用方要用它做收尾清理)。 */
+    userDataDir,
+    /** true = 这个目录是**我们**为本次会话临时造的 ⇒ 会话结束可以删;false = 调用方显式给的 ⇒ 绝不删。 */
+    ephemeralUserDataDir: !opts.userDataDir,
+  };
 }

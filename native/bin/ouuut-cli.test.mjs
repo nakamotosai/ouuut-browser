@@ -97,6 +97,45 @@ test("默认档案目录带 pid,同机多会话互不干扰", () => {
   assert.notEqual(a, b, "两个会话抢同一个 user-data-dir 会造成同样的『交接后退出』");
 });
 
+test("★ 会话专用的临时档案目录**用完即删**(核验实测:%TEMP% 里曾累计 88 个)", async () => {
+  // 这条守的是 ADR-007 那句话的落地:「disposable 用完即弃」。
+  // 核验者 2026-10-25 实测:每跑一次 CLI 就留下一个 `ouuut-session-<pid>`,累计到 88 个。
+  const { mkdir, writeFile, rm } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+  const { defaultUserDataDir } = await import("./launch-args.mjs");
+  const dir = defaultUserDataDir("ouuut", process.pid); // 与 withRuntime 内部那条默认路径一致
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, "marker.txt"), "x");
+
+  await withRuntime({ argv: [], run: async () => "ok", spawn: fakeSpawn });
+
+  assert.equal(existsSync(dir), false, "会话结束后不该留下临时档案目录");
+  await rm(dir, { recursive: true, force: true }); // 保险:万一断言失败也别留垃圾
+});
+
+test("★ 调用方显式给的档案目录**绝不删**(那是使用者的身份)", async () => {
+  const { mkdir, rm } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+  const os = await import("node:os");
+  const dir = path.join(os.tmpdir(), `ouuut-keep-${process.pid}`);
+  await mkdir(dir, { recursive: true });
+
+  const DIR_FLAG = ["--user-data", "dir"].join("-");
+  await withRuntime({ argv: [DIR_FLAG, dir], run: async () => "ok", spawn: fakeSpawn });
+
+  assert.equal(existsSync(dir), true, "显式给的档案目录必须原样留着 —— 那是使用者的真实身份");
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("★ 启动参数:launcher 要告诉调用方「档案目录是谁给的」(收尾清理靠它)", () => {
+  const a = buildBrowserArgs({}, {});
+  assert.ok(a.userDataDir, "要回传实际用的档案目录");
+  assert.equal(a.ephemeralUserDataDir, true, "默认那条是**我们**造的 ⇒ 会话结束可以删");
+  const b = buildBrowserArgs({ userDataDir: "D:/my-profile" }, {});
+  assert.equal(b.userDataDir, "D:/my-profile");
+  assert.equal(b.ephemeralUserDataDir, false, "调用方显式给的 ⇒ 绝不删");
+});
+
 test("启动参数:显式给了 user-data-dir 就用给的(留给 real 档案导入)", () => {
   const { args } = buildBrowserArgs({ userDataDir: "D:/my-profile" }, {});
   assert.ok(args.includes("--user-data-dir=D:/my-profile"));
