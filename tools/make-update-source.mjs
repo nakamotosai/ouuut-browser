@@ -3,7 +3,7 @@
 //
 // 用法:
 //   node tools/make-update-source.mjs --from dist/ouuut-0.1.3-win-x64 --version 0.1.4 \
-//        --out dist/updates/0.1.4 --key F:\.secrets\ouuut-release.pem \
+//        --out dist/updates/0.1.4 --key <凭据目录>\ouuut-release.pem \
 //        --set payload/VERSION=0.1.4 [--set payload/js/xxx.mjs=@本地文件]
 //
 // 产出(可直接用 `python3 -m http.server` 或任何静态服务发出去):

@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 
 import {
   auditDanglingRefs,
+  auditPublishRedact,
   ADR010_ITEMS,
   auditPaths,
   auditContent,
@@ -178,4 +179,35 @@ test("ADR-010 的记录与闸自己的实现/用例豁免(否则是自指假阳�
 test("`re/ego-lite2` 不许误伤(前缀相同但不是它)", () => {
   assert.equal(auditDanglingRefs({ path: "docs/x.md", content: "re/ego-lite2 是另一回事" }).ok, true);
   assert.equal(auditDanglingRefs({ path: "docs/x.md", content: "re/ego-lite/ 下的日志" }).ok, false);
+});
+
+test("★ 「能用但不该公开」的东西 ⇒ 拦下(不是密钥,却可直接使用)", () => {
+  const bad = [
+    "socks5://198.51.100.7:41105",
+    "socks5://saaaai:<pass>@host:2260",
+    "C:\\Users\\sai\\bin\\proxy-browser.py",
+    "F:\\.secrets\\ouuut-release.pem",
+  ];
+  for (const line of bad) {
+    const r = auditPublishRedact({ path: "docs/x.md", content: line });
+    assert.equal(r.ok, false, `本该拦下:${line}`);
+    assert.equal(r.violations[0].kind, "publish-redact");
+  }
+});
+
+test("占位符与 TEST-NET 地址不算违规(公开文档就该这么写)", () => {
+  for (const line of [
+    "socks5://<出口节点>:41105",
+    "socks5://198.51.100.7:41105",
+    "<你的家目录>\\bin\\proxy.py",
+    "<凭据目录>\\ouuut-release.pem",
+  ]) {
+    assert.equal(auditPublishRedact({ path: "docs/x.md", content: line }).ok, true, line);
+  }
+});
+
+test("闸自己的实现与用例豁免(否则是自指假阳性)", () => {
+  for (const f of ["native/binding/public-audit.mjs", "native/binding/public-audit.test.mjs"]) {
+    assert.equal(auditPublishRedact({ path: f, content: "socks5://198.51.100.7:41105" }).ok, true, f);
+  }
 });

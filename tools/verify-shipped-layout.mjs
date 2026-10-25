@@ -2,7 +2,7 @@
 // tools/verify-shipped-layout.mjs —— 发布形态的**验收闸**(P6 / ADR-017)
 //
 // 用法:
-//   node tools/verify-shipped-layout.mjs --dir dist/ouuut-0.1.3-win-x64 [--key F:\.secrets\ouuut-release.pem | --pub <公钥.pem>] [--smoke]
+//   node tools/verify-shipped-layout.mjs --dir dist/ouuut-0.1.3-win-x64 [--key <凭据目录>\ouuut-release.pem | --pub <公钥.pem>] [--smoke]
 //
 // 检查什么(**顺序即失败顺序**,任何一条不过就非零退出):
 //   1. 清单验签(缺公钥时从 `--key` 的私钥推出来);

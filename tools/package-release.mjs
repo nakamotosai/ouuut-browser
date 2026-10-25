@@ -3,7 +3,7 @@
 //
 // 用法:
 //   node tools/package-release.mjs --src chromium/src/out/Release --out dist/ouuut-0.1.0-win-x64 \
-//        --version 0.1.0 --key F:\.secrets\ouuut-release.pem [--dry-run]
+//        --version 0.1.0 --key <凭据目录>\ouuut-release.pem [--dry-run]
 //
 // 产物:
 //   <out>/payload/        ← 要装到用户机器上的全部文件

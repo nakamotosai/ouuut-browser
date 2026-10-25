@@ -8,7 +8,7 @@ credentials*
 *_token
 .tokens/
 # 例外:**发布公钥必须入库** —— 第三方要靠它验签,它不是秘密。
-# 私钥(`F:\.secrets\ouuut-release.pem`)在仓库外,上面那条 `*.pem` 管的是它。
+# 私钥(`<凭据目录>\ouuut-release.pem`)在仓库外,上面那条 `*.pem` 管的是它。
 !/release/ouuut-release.pub.pem
 
 # === 构建 / 运行日志(不入库) ===

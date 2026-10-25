@@ -82,7 +82,7 @@
 
 ## 五、凭据
 
-- 凭据一律在 `F:\.secrets\`,用 `python C:/Users/sai/.omp/agent/scripts/secrets_manager.py`
+- 凭据一律在 `<凭据目录>\`,用 `python <你的家目录>/.omp/agent/scripts/secrets_manager.py`
   读(list / read / search / write)
 - **禁止**把任何凭据值写进本仓库任何文件(含测试、示例、日志、commit message)
 - `.gitignore` 已排除 `.env*`、`*.key`、`secrets*`

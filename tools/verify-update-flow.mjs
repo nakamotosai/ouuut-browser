@@ -6,7 +6,7 @@
 //
 // 用真实的发布目录 + 远端更新源:
 //   node tools/verify-update-flow.mjs --package dist/ouuut-0.1.3-win-x64 \
-//        --base-url https://<vps-jp>/updates/0.1.4 --key F:\.secrets\ouuut-release.pem
+//        --base-url https://<vps-jp>/updates/0.1.4 --key <凭据目录>\ouuut-release.pem
 //
 // 流程(每一步都是**真的**):
 //   1. 造一个 0.1.3 的包(默认小包:只有 manifest/签名 + 几个小文件);

@@ -21,7 +21,7 @@ import {
 
 const NODE_A = { id: "jp-a", url: "socks5://198.51.100.7:41105", egressIp: "161.33.5.222", country: "JP" };
 const NODE_B = { id: "jp-b", url: "socks5://198.51.100.7:41106", egressIp: "161.33.5.223", country: "JP" };
-const ROTATOR = { id: "resin", url: "socks5://saaaai:hunter2@198.51.100.7:2260", sticky: false };
+const ROTATOR = { id: "resin", url: "socks5://user-example:pw-example@198.51.100.7:2260", sticky: false };
 
 async function tmpStore() {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "ouuut-pool-"));

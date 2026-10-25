@@ -91,6 +91,51 @@ export function auditDanglingRefs({ path: p, content } = {}) {
   return { ok: violations.length === 0, violations };
 }
 
+/**
+ * 「**公开价值为零、别人却能直接用**」的东西(2026-10-26 材料审查扩面)。
+ *
+ * 为什么单独一条:公开闸原本只找 ADR-010 材料与密钥**模式** —— 但真正会咬人的是
+ * 这类"不是密钥、却可直接使用"的信息:无认证的 socks5 出口地址(别人拿去就用你的付费代理)、
+ * 个人家目录、本机凭据目录、代理用户名。
+ *
+ * ⚠️ 这条**没有**"说明一下就能留"的出口:它们没有正当的公开形态,
+ * 要么换成占位符(`<出口节点>`),要么换成文档保留地址(`198.51.100.7` = TEST-NET-2)。
+ */
+export const PUBLISH_REDACT_PATTERNS = Object.freeze([
+  { re: /100\.86\.60\.101/, why: "出口节点地址(无认证 socks5 —— 别人拿到就能用我们的代理)" },
+  { re: /\bsaaaai\b/, why: "代理用户名" },
+  { re: /C:[\\/]Users[\\/]sai\b/i, why: "个人家目录路径" },
+  { re: /F:[\\/]\.secrets\b/i, why: "本机凭据目录的位置" },
+]);
+
+/** 豁免:只有"必须写下这些字面量才谈得上检查它们"的两个文件。 */
+export const REDACT_EXEMPT = Object.freeze([
+  "native/binding/public-audit.mjs",
+  "native/binding/public-audit.test.mjs",
+]);
+
+/**
+ * @param {{path: string, content: string}} o
+ */
+export function auditPublishRedact({ path: p, content } = {}) {
+  const file = norm(p);
+  if (REDACT_EXEMPT.includes(file)) return { ok: true, violations: [] };
+  const violations = [];
+  const lines = String(content ?? "").split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    for (const { re, why } of PUBLISH_REDACT_PATTERNS) {
+      if (re.test(lines[i])) {
+        violations.push({
+          path: `${file}:${i + 1}`,
+          kind: "publish-redact",
+          why: `${why};换成占位符(\`<出口节点>\`)或 TEST-NET(\`198.51.100.7\`)`,
+        });
+      }
+    }
+  }
+  return { ok: violations.length === 0, violations };
+}
+
 /** 路径归一:`\` → `/`,去掉开头的 `./`。 */
 const norm = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\.\//, "");
 
@@ -152,6 +197,7 @@ export async function auditPublicMaterial({ files = [], readFile = null, skipCon
       }
       violations.push(...auditContent({ path: f, content }).violations);
       violations.push(...auditDanglingRefs({ path: f, content }).violations);
+      violations.push(...auditPublishRedact({ path: f, content }).violations);
     }
   }
 

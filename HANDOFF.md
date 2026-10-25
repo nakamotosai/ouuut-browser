@@ -103,15 +103,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 ```bash
 # 坑一:本机 scp 是 Windows OpenSSH,**不认 msys 的 /tmp**(实测报 stat local "...": No such file)。
 #      改走 stdin;或者给 scp 传 Windows 路径。
-git archive --format=tar HEAD -o "C:/Users/sai/AppData/Local/Temp/ouuut-head.tar"
-ssh vps-jp 'cat > /tmp/ouuut-head.tar' < "C:/Users/sai/AppData/Local/Temp/ouuut-head.tar"
+git archive --format=tar HEAD -o "<你的家目录>/AppData/Local/Temp/ouuut-head.tar"
+ssh vps-jp 'cat > /tmp/ouuut-head.tar' < "<你的家目录>/AppData/Local/Temp/ouuut-head.tar"
 ssh vps-jp 'rm -rf /tmp/ouuut-p3 && mkdir -p /tmp/ouuut-p3 && tar -xf /tmp/ouuut-head.tar -C /tmp/ouuut-p3'
 
 # 坑二:harness 的 dist/ **不入版本控制**,git archive 里没有它 —— 缺了 CLI 走不通。
 #      顺带说:上一个 rm -rf 也会把上一轮的 run-*.sh / *-smoke.js 一起删掉(它们同样不在归档里)。
 cd harness/package/ego-browser
-tar -czf "C:/Users/sai/AppData/Local/Temp/ouuut-harness.tgz" dist node_modules/acorn
-ssh vps-jp 'cat > /tmp/ouuut-harness.tgz' < "C:/Users/sai/AppData/Local/Temp/ouuut-harness.tgz"
+tar -czf "<你的家目录>/AppData/Local/Temp/ouuut-harness.tgz" dist node_modules/acorn
+ssh vps-jp 'cat > /tmp/ouuut-harness.tgz' < "<你的家目录>/AppData/Local/Temp/ouuut-harness.tgz"
 ssh vps-jp 'tar -xzf /tmp/ouuut-harness.tgz -C /tmp/ouuut-p3/harness/package/ego-browser'
 ```
 
