@@ -20,6 +20,9 @@
 import path from "node:path";
 import os from "node:os";
 
+// 三种档案的**唯一来源**是档案引擎 —— 另抄一份迟早会漂(F3 的 kind 就是那三个)
+import { KINDS as PROFILE_KINDS } from "../binding/archive.mjs";
+
 export const USAGE = `ouuut —— 自带 Chromium 的 agent 浏览器
 
 用法:
@@ -35,6 +38,9 @@ export const USAGE = `ouuut —— 自带 Chromium 的 agent 浏览器
   --timeout <seconds>     单条 CDP 消息的超时(默认 30)
   --namespace <name>      注入的全局名(默认 ouuut)
   --headless              无头(默认有头 —— 与上游一致)
+  --profile-kind <kind>   档案种类:real / persona / disposable(F11 的三种档案)。
+                          real 必须显式给出档案目录 —— 那是使用者的真实身份,
+                          我们**绝不替他造一个**
   --user-data-dir <path>  档案目录(**默认给一个临时目录**,不用你的真实档案)
   --window-position <x,y> 窗口位置(如 1920,0 —— 把浏览器放到副屏,不抢主屏)
   --window-size <w,h>     窗口尺寸(如 1380,960)
@@ -87,6 +93,7 @@ export function parseArgs(argv = []) {
     namespace: "ouuut",
     timeoutMs: 30_000,
     headless: false,
+    profileKind: null,
     browser: null,
     userDataDir: null,
     windowPosition: null,
@@ -149,6 +156,16 @@ export function parseArgs(argv = []) {
         out.proxy = v;
         break;
       }
+      case "--profile-kind": {
+        const v = next();
+        if (v === null) return out;
+        if (!PROFILE_KINDS.includes(v)) {
+          out.error = `--profile-kind 只接受 ${PROFILE_KINDS.join(" / ")},收到 ${JSON.stringify(v)}`;
+          return out;
+        }
+        out.profileKind = v;
+        break;
+      }
       case "--headless":
         out.headless = true;
         break;
@@ -168,6 +185,13 @@ export function parseArgs(argv = []) {
         break;
     }
   }
+  // `real` 是**使用者的真实身份**。没有显式档案目录就无法确定"哪个是真的" ——
+  // 猜一个等于替他造了个假的"真实档案",那比报错危险得多(F3 的硬约束)。
+  if (out.profileKind === "real" && !out.userDataDir) {
+    out.error = "--profile-kind real 必须同时给出档案目录 —— 那是使用者的真实档案,不能替他造";
+    return out;
+  }
+
   return out;
 }
 
@@ -196,15 +220,16 @@ export function buildBrowserArgs(opts = {}, env = {}) {
     // ---- 那六项里的"要加的" ----
     `--disable-features=${DEFAULT_FEATURES_TO_DISABLE.join(",")}`,
     // ---- 视口 / 窗口位置 ----
-    // 默认**不给**位置,交给窗口管理器(即"开在系统认为合适的地方")。
-    // 显式给了位置就钉在那儿 —— 用途:把 agent 浏览器放到副屏,不要抢用户主屏。
-    // (实测场景:本机主屏 0,0 1707×960,副屏 1920,0 1389×970)
-    ...(winPos || winSize
-      ? [
-          ...(winPos ? [`--window-position=${winPos}`] : []),
-          ...(winSize ? [`--window-size=${winSize}`] : []),
-        ]
-      : ["--start-maximized"]),
+    // **无头下一条都不给** —— 没有窗口可摆,给了只是噪音,还会让
+    // 「桌面与服务器同一套参数」这件事变得不成立(F11 的验收)。
+    ...(opts.headless
+      ? []
+      : winPos || winSize
+        ? [
+            ...(winPos ? [`--window-position=${winPos}`] : []),
+            ...(winSize ? [`--window-size=${winSize}`] : []),
+          ]
+        : ["--start-maximized"]),
     // 抑制非代理 UDP(ADR-014);配合 --proxy 用
     "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 
