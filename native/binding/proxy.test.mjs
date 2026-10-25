@@ -100,14 +100,39 @@ test("★ redactProxy:无 scheme 的凭据串也要抹(F2 的兜底)—— 回�
   }
 });
 
-test("redactProxy:别误伤 Windows 路径(冒号后带反斜杠的不算凭据)", () => {
-  // 核验抓到的误伤:兜底正则第一版会把 `C:\repo\node_modules\foo@1.0.0\index.js` 吞成 `***@1.0.0\index.js`
+test("★ redactProxy:口令里含 `@`/`\\` 也必须**整段**抹干净(2026-10-25 核验 P2/P3 的两条漏抹)", () => {
+  // 这两条都是**真会出现在诊断里**的形状,不是语法外的怪例:
+  //   - 口令含 `@`:`parseProxy("socks5://u:p@ss@h:1")` 返回 `hasCredentials:true`
+  //     (WHATWG 以**最后**一个 `@` 为分隔)⇒ 用户把 `p@ssw0rd` 当口令打是**我们认可的**输入。
+  //     修之前只抹到第一个 `@`,`ss` 会留在启动参数/stderr 里 ⇒ 口令尾巴漏出去。
+  //   - 口令含 `\`:修之前尾段禁反斜杠,整条凭据**全漏**(连用户名带口令)。
+  for (const [input, want] of [
+    ["socks5://u:p@ss@h:1", "socks5://***@h:1"],
+    ["u:p@ss@h:1", "***@h:1"],
+    ["--proxy-server=user:p\\w@h:1080", "--proxy-server=***@h:1080"],
+    ["DOMAIN\\user:p\\w@h:1080", "***@h:1080"],
+    ["socks5://user:p\\w@h:1080", "socks5://***@h:1080"],
+  ]) {
+    assert.equal(redactProxy(input), want, `没抹干净:${input}`);
+  }
+});
+
+test("redactProxy:别误伤 Windows 路径(盘符前瞻是有用的,不是装饰)", () => {
+  // 核验做过变异:删掉前瞻 `(?![A-Za-z]:[\\/])` 时旧用例**全绿** ⇒ 前瞻是死代码。
+  // 尾段放宽(允许 `\`,为了不漏口令)之后前瞻变成**唯一的路径挡板**,所以下面这几条现在守得住它。
   for (const pathish of [
     "at C:\\repo\\node_modules\\foo@1.0.0\\index.js",
-    "C:\\x\\y:z@w", // 盘符 + 冒号 + `@` 的路径同样不许被当成凭据
+    "C:\\x\\y:z@w",
+    "C:\\a\\b@1.0\\c.js",
+    "--flag=C:\\a@b\\c",
+    "file:///C:/a@b/c",
+    "\\\\srv\\share\\x",
+    "C:\\tmp\\a:b@c",
   ]) {
     assert.equal(redactProxy(pathish), pathish, `诊断里的路径不该被搅:${pathish}`);
   }
+  // 明知故犯的代价:既含**空格**又带 `x:y@z` 的路径会被多抹(`at C:\a b:c@d\e`)——
+  // 那条路只能靠"宁可多抹"兜住(见 proxy.mjs 注释),所以不写成断言,免得后人以为是缺陷。
 });
 
 test("★ redactProxy:用户名带反斜杠的域账号凭据**也必须**抹(收窄误伤时曾漏掉这一头)", () => {
