@@ -71,7 +71,7 @@ const SIMPLIFIABLE_ROLE = "container";
  * - `ignored: true` 且无子节点的节点直接不进树
  *
  * @param {Array} nodes
- * @param {(role:string)=>string} roleToToken
+ * @param {(role:string, node:object)=>string} roleToToken
  */
 export function normalizeAxNodes(nodes, roleToToken) {
   if (!Array.isArray(nodes) || nodes.length === 0) {
@@ -94,7 +94,7 @@ export function normalizeAxNodes(nodes, roleToToken) {
   function build(n) {
     const kids = childIdsOf(n);
     const name = typeof n.name?.value === "string" ? n.name.value : "";
-    const role = roleToToken(n.role?.value);
+    const role = roleToToken(n.role?.value, n);
     const backendNodeId = Number.isFinite(n.backendDOMNodeId) ? n.backendDOMNodeId : null;
 
     // `ignored` 且没有子节点 → 不进树(§4.1 规则 1 的近亲:AX 树里的噪声)
@@ -164,23 +164,42 @@ export function simplifyTree(node) {
   return { ...node, children: kids };
 }
 
-/** 缩进渲染。深度从 0 起(`root` 不缩进,与 ego 实测一致)。 */
-export function renderSimplified(root, { indent = 2, maxDepth = 64 } = {}) {
-  const lines = [];
-  const walk = (n, depth) => {
+/**
+ * 渲染成**结构化行**:每行带上它来自哪个节点、多深、父行是哪一行。
+ *
+ * 为什么需要:超预算时要「按重要性挑行保留」,而挑行必须知道每行的身份和祖先链 ——
+ * 只拿到拼好的字符串就只能一刀切。
+ */
+export function renderSimplifiedLines(root, { indent = 2, maxDepth = 64 } = {}) {
+  const out = [];
+  const walk = (n, depth, parent) => {
     if (!n) return;
     const pad = " ".repeat(indent * depth);
     // `root` 的 AX 名字就是文档标题,而标题已经在**首行头**里了 ——
     // ego 的实测输出是裸 `root`(见 §4.3)。再打一次就是重复信息。
     const showName = n.role !== "root" && typeof n.name === "string" && n.name.length > 0;
-    // `text` 角色是页面原文的载体 —— 原样带引号,不做任何转义以外处理
-    lines.push(showName ? `${pad}${n.role} ${JSON.stringify(n.name)}` : `${pad}${n.role}`);
+    const idx = out.length;
+    out.push({
+      text: showName ? `${pad}${n.role} ${JSON.stringify(n.name)}` : `${pad}${n.role}`,
+      depth,
+      role: n.role,
+      name: typeof n.name === "string" ? n.name : "",
+      hasRef: Number.isFinite(n.refId),
+      refId: Number.isFinite(n.refId) ? n.refId : null,
+      parent, // 父行下标;-1 = 无父
+    });
     // 深度上限:某些页面的 AX 树极深,防御性截断(与旧实现一致)
     if (depth + 1 >= maxDepth) return;
-    for (const c of n.children ?? []) walk(c, depth + 1);
+    for (const c of n.children ?? []) walk(c, depth + 1, idx);
   };
-  walk(root, 0);
-  return lines.join("\n");
+  walk(root, 0, -1);
+  return out;
+}
+
+export function renderSimplified(root, opts) {
+  return renderSimplifiedLines(root, opts)
+    .map((l) => l.text)
+    .join("\n");
 }
 
 /** 树里全部 (role, name, backendNodeId) 三元组,按**先根序**。验收对账用。 */

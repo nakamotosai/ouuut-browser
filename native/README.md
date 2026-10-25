@@ -155,6 +155,10 @@ ego 说 `root`/`text`/`anchor`/`container`。映射表落在 `snapshot.mjs`,不�
 **仍未做**(不掩饰):
 - `ref` / `loc=` 选择器编号(§4.5 的跨 frame 唯一性与同一性校验)
 - 文本化简的完整规则(§4.1)
-- `maxResultLength` 目前是**截断**而不是"按重要性选择保留哪些节点"
-- `ordered_list` / `unordered_list` 的区分:CDP 的 `list` 角色不直接告诉有序无序,
-  目前按 `unordered_list` 兜底 —— **这条是已知的粗糙处**
+- ~~`maxResultLength` 是截断~~ → 已改为**按重要性挑选行**(见 `snapshot.mjs` 的
+  `selectByImportance`):预算紧张时优先保 `root` → 带 ref 的可交互节点 → heading →
+  有内容的 text → 有名结构节点,被丢的位置写 `...(省略 N 行)`。挑中的行**连祖先一起保**
+  且**保持原序**,否则层级读不通
+- ~~`ordered_list` / `unordered_list` 按 unordered 兜底~~ → **不再装懂**:
+  CDP 的 `list` 角色不带有序信息,所以拿不到 DOM 标签时输出中性 token `list`;
+  调用方传 `tagNameOf(backendNodeId)` 才会得到 `ordered_list` / `unordered_list`
