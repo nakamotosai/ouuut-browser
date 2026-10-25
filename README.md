@@ -14,14 +14,16 @@
 
 **按 `docs/下一步方案.md` 的工作包顺序推进(P1–P12)。**
 
-第一步 **P1 · POSIX 通道分支已完成**(2026-10-25)—— Linux 侧从 `298 过 / 2 红` 变成
-**`306 条 / 300 过 / 0 红 / 6 跳过`**,Windows 仍 `306/306`;**真 Chromium 已在 `vps-jp` 上跑通**
-(快照含 `hello ouuut` / `pay now`,且全程零监听端口)。
+第一步 **P1 · POSIX 通道分支已完成**(2026-10-25)—— Linux 侧红从 2 变 **0**,Windows 仍 `306/306`;
+**真 Chromium 已在 `vps-jp` 上跑通**(快照含 `hello ouuut` / `pay now`,且全程零监听端口)。
+Linux 的通过/跳过数**取决于 harness `dist/` 是否就位**:未就位 = `300 过 / 6 跳过`,就位 = `304 过 / 2 跳过`(**红恒为 0**)。
 
-**下一个是 `P2 · vps-jp 上跑三种档案`**(`real` / `persona` / `disposable` 各起一次)。
+**下一个是 `P8 · 检测基准收尾`**(用我们自己的驱动跑 `bot-detector` 取干净读数 + `auditWebrtc()` 真跑;
+另含 **creepjs 判据自洽性复核** —— 见 `docs/里程碑.md` M0 那张三轮表)。
+可并行的还有 **P3(档案绑代理)→ P4(出口一致性闸)** 与 **P5(HTTP/WS + MCP 入口)**;`P10` 可夜间起。
 
 ```
-P1 ✅ 通道分支 ──► P2 vps-jp 三种档案 ──► P8 检测基准收尾(自有驱动 + auditWebrtc 真跑)
+P1 ✅ ──► P2a ✅ ──► P2b ✅ ──► P8(下一个)
 P3 代理绑定 ──► P4 出口一致性闸
 P5 三入口(HTTP/WS + MCP stdio)
 P9 零遥测验收 + shadow DOM
@@ -119,7 +121,7 @@ snapshot = 454 字符,含 heading "hello ouuut" / button "pay now"
 - **M5 无头 / 服务器** — ✅ 有头无头同一套参数 + 多机编排;真服务器实跑待做
 - **M6 行为** — ✅ 内容驱动节奏,停留时间与长度相关性 r=0.91~0.96
 - **M7 分发** — ✅ Ed25519 签名 · 原子更新 · 材料审查闸 · 第三方安装 · **端到端跑通**
-- **全量回归** — **Windows 306 / 306**;Linux(`vps-jp`)**306 条 / 300 过 / 0 红 / 6 跳过**;真 Chromium 已在 Linux 上跑通(快照含 `hello ouuut` / `pay now`,零监听端口)
+- **全量回归** — **Windows 306 / 306**;Linux(`vps-jp`)**306 条 / 红恒为 0**(`300 过 / 6 跳过` 当 harness `dist/` 未就位,`304 过 / 2 跳过` 当就位);真 Chromium 已在 Linux 上跑通(快照含 `hello ouuut` / `pay now`,零监听端口)
 
 ---
 

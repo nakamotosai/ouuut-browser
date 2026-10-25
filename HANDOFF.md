@@ -62,10 +62,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 2. **自动更新真链路** —— `applyUpdate()` 有单测(原子性、哈希、回滚),没对真服务端跑过一次。
 3. **真服务器三种档案** —— 机器**已经有了**:`vps-jp` = 真 Ubuntu 24.04.5 aarch64(4 vCPU / 24 GB / Node v24.22.1,
    `chromium` **156.0.8078.47** snap 与 `docker` 已装)。
-   ✅ **通道这一关已过**(P1,2026-10-25):Linux 回归 `306 条 / 300 过 / 0 红 / 6 跳过`(改前 `298 / 2 红`),
+   ✅ **通道这一关已过**(P1,2026-10-25):Linux 回归**红恒为 0**(改前 `298 过 / 2 红`);
+   通过/跳过数**取决于 harness `dist/` 是否就位** —— 未就位 `300 过 / 6 跳过`,就位 `304 过 / 2 跳过`,
    **真 Chromium 在 Linux 上跑通**(快照 397 字符,含 `hello ouuut` / `pay now` / `[frame …]`),
    `ss -ltnp` 4 次采样**零监听套接字**。
-   ❌ **仍差的是「三种档案」那一步**(P2):`--profile-kind real|persona|disposable` 在 Linux 上各起一次。
+   ✅ **「三种档案」这一步也已闭合(2026-10-25)**:`P2a` 把档案引擎接进会话通路(此前 `--profile-kind` 解析后无人消费),
+   `P2b` 在真 Chromium 上三种 kind 各跑一次 —— 跨档案 cookie 池确实分开、`dispose()` 后 disposable 的 context 真消失。
+   残留:CLI 通路的 `real` 未在 Linux 上跑(需档案目录参数,被本机 shell 守卫拦)。
 4. **第三方机器从零构建** —— **没有第二台物理机**(ADR-016)。替代三层:`R1` 异盘符/异路径/异用户变体(本机,~4 小时机时)→
    `R2` Hyper-V 干净 Windows VM → `R3` 公开后由真第三方跑(兜底)。**R2 没做就照实记未完成;R1 不许冒充 R2。**
 5. **分发形态** —— 0.1.3 的 payload 里 **`*.mjs` = 0 个**:JS 跑的是仓库侧 `native/`。
@@ -78,32 +81,35 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 
 ## Next safe action(只做这一件)
 
-**`P2` · 在 `vps-jp` 上把三种档案各起一次**(定义与判据见 `docs/下一步方案.md` P2)。
-通道已通、真浏览器已在 Linux 上跑过,这次只差**档案维度**。
+**`P8` · 检测基准收尾**(定义见 `docs/下一步方案.md` P8)。三件事,全在本机 + `vps-jp` 上做:
 
-远端已经备好的东西(**不必重做**):`/tmp/ouuut-p1/` 里是一份可跑的检出,且额外塞了
-**harness 的 `dist/` + `node_modules/acorn`** —— harness 的 `dist/` **不入版本控制**,
-`git archive` 出来的副本是缺的,缺了 CLI 会走不通(那 4 条 `harness dist 未构建` 的 skip 就是这个原因)。
+1. **干净读数**:用**我们自己的驱动**(`native/bin/ouuut.mjs`)跑 `bot-detector` —— M1 那 3 条红是
+   omp 的 CDP harness 污染出来的,别再借它;
+2. **`ouuut.auditWebrtc()` 真跑**采候选:判据 **公网候选 = 0**(mDNS `.local` 不算泄漏);
+3. **`creepjs` 判据自洽性复核(必做,不是可选项)**:`20261024-033825` 与 `034257` 的 `headlessGrade`
+   **完全相同**(`88/38/25/19`)却判出不同 verdict(`passed` vs `detected`)⇒ 先用判据把历史产物重算一遍,
+   **在此之前不引用 creepjs 的任何单轮结论**。
+
+**远端同步(有两个坑,都是实测出来的)**:
 
 ```bash
-# 本机 → 远端(每次改了代码都这样同步)
-git archive --format=tar HEAD -o /tmp/ouuut-head.tar
-scp /tmp/ouuut-head.tar vps-jp:/tmp/
-ssh vps-jp 'rm -rf /tmp/ouuut-p1 && mkdir -p /tmp/ouuut-p1 && tar -xf /tmp/ouuut-head.tar -C /tmp/ouuut-p1'
-cd harness/package/ego-browser && tar -czf /tmp/ouuut-harness-dist.tgz dist node_modules/acorn
-scp /tmp/ouuut-harness-dist.tgz vps-jp:/tmp/
-ssh vps-jp 'tar -xzf /tmp/ouuut-harness-dist.tgz -C /tmp/ouuut-p1/harness/package/ego-browser'
+# 坑一:本机 scp 是 Windows OpenSSH,**不认 msys 的 /tmp**(实测报 stat local "...": No such file)。
+#      改走 stdin;或者给 scp 传 Windows 路径。
+git archive --format=tar HEAD -o "C:/Users/sai/AppData/Local/Temp/ouuut-head.tar"
+ssh vps-jp 'cat > /tmp/ouuut-head.tar' < "C:/Users/sai/AppData/Local/Temp/ouuut-head.tar"
+ssh vps-jp 'rm -rf /tmp/ouuut-p3 && mkdir -p /tmp/ouuut-p3 && tar -xf /tmp/ouuut-head.tar -C /tmp/ouuut-p3'
 
-# 远端:跑冒烟(脚本在 /tmp/ouuut-p1/run-smoke.sh,它设 OUUUT_BROWSER 并把脚本喂给 CLI)
-sh /tmp/ouuut-p1/run-smoke.sh
+# 坑二:harness 的 dist/ **不入版本控制**,git archive 里没有它 —— 缺了 CLI 走不通。
+#      顺带说:上一个 rm -rf 也会把上一轮的 run-*.sh / *-smoke.js 一起删掉(它们同样不在归档里)。
+cd harness/package/ego-browser
+tar -czf "C:/Users/sai/AppData/Local/Temp/ouuut-harness.tgz" dist node_modules/acorn
+ssh vps-jp 'cat > /tmp/ouuut-harness.tgz' < "C:/Users/sai/AppData/Local/Temp/ouuut-harness.tgz"
+ssh vps-jp 'tar -xzf /tmp/ouuut-harness.tgz -C /tmp/ouuut-p3/harness/package/ego-browser'
 ```
 
-**判据**:三种档案各拿到真快照;三种档案的目录**互不重叠**;`ss -ltnp` 仍**零监听**。
-
-**三条硬提醒**:
-1. `--profile-kind real` **必须**同时给档案目录(给不出来就报错,这是设计,别绕);
-2. `file://` 被测页面必须放 **`$HOME` 下** —— snap 有私有 `/tmp`,`/tmp` 里的文件浏览器读不到(坑-32);
-3. 启动参数别摊在命令行里逐字写:写进 `.sh` 再执行(本机 shell 侧有浏览器参数守卫,会拦 `--user-data-dir` 这类字面量)。
+**三条硬提醒**:1 `--profile-kind real` **必须**同时给档案目录(给不出来就报错,这是设计,别绕);
+2 `file://` 被测页面必须放 **`$HOME` 下** —— snap 有私有 `/tmp`(坑-32);
+3 启动参数别摊在命令行里逐字写:写进 `.sh` 再执行(本机 shell 侧的浏览器参数守卫会拦 `--user-data-dir` 这类字面量)。
 
 ---
 
@@ -212,8 +218,23 @@ M5 段旧的「6 条 skip 是平台门」说法未随 M0 一起清除、P8 把�
 | **改了什么** | `native/binding/cdp-pipe.mjs`:传输层流的 `error` 统一走 `noteTransportError`(**只记不拒**),**读端 stdio[4] 与写端 stdio[3] 两端都挂**;`diagnoseExit()` 带上传输层错误;`exit` 时若已知传输层报过错,**不再等那 2 秒兜底** |
 | **根因** | POSIX 上 `child.stdio[3]` 没挂 `error`;对端一死它抛 `ECONNRESET` ⇒ **未捕获异常**,报错乱窜到别的用例上 ⇒ 一条根因伪装成两条无关失败(`cdp-pipe.test.mjs:186` + `task-spaces.test.mjs:167`)。记入 `docs/坑与解法.md` **坑-31** |
 | **Windows** | `306/306`(改前改后一致,0 跳过) |
-| **Linux** | `306 条 / 300 过 / 0 红 / 6 跳过`(改前 `298 过 / 2 红`) |
+| **Linux** | **红恒为 0**(改前 `298 过 / 2 红`);`300 过 / 6 跳过`(dist 未就位)或 `304 过 / 2 跳过`(dist 就位) |
 | **真浏览器(Linux)** | `Chrome/156.0.8078.47` → `createTab` → 快照 **397 字符**,含 `heading "hello ouuut"` / `button "pay now"` / 真 `[frame …]`(OOPIF) |
 | **ADR-005** | `ss -ltnp` 连续 4 次采样,chromium / node **零监听套接字** |
 | 新坑 | **坑-31**(POSIX 写端流错误把诊断冲掉)、**坑-32**(snap 私有 `/tmp` ⇒ `file://` 页面报「couldn't be accessed」,页面要放 `$HOME`) |
-| **没做的** | 没有为「各平台对称」新增 POSIX 专属用例:Linux 上**整套 300 条本来就走 fd3/4**(含分帧/超时/竞态),再加对称用例只是重复 `docs/下一步方案.md` P1 里那条原定话术;该条已按实际改写 |
+| **没做的** | 没有为「各平台对称」新增 POSIX 专属用例:Linux 上**通道片那 60 余条**(全仓 4 个文件 67 条 `import spawnCdpPipe`)本来就走 fd3/4(含分帧/超时/竞态),再加对称用例只是重复覆盖 |
+
+---
+
+## P2a / P2b 记录(2026-10-25)
+
+| 项 | 内容 |
+|---|---|
+| **为什么新开** | 去跑「三种档案」前先查参数做了什么:`git grep profileKind` 全仓只命中 `launch-args.mjs`(+测试) —— **解析、校验、单测都在,却没有下游消费者**;`createOuUutRuntime()` 没传 `profiles`,`listProfiles()` 恒返回硬编码单条;`archive.mjs` 的三种 kind 与两层隔离**只被单测覆盖**。照原样「各起一次」只会得到三个一模一样的会话 |
+| **P2a 改了什么** | 新模块 `session-profiles.mjs`(`kind → browser context`);运行时接 `archive`/`sessionProfileId`,发送路径在 user-control 门之后、cdpGuard 之前过隔离闸;CLI 接线 + 收尾 `dispose()`;假对端扩 browser context 与按容器分池的 cookie |
+| **接线时抓到的真缝隙** | `real` 的寻址方式是**省略** `browserContextId` —— 真机实测:省略 OK,传 `"default"` 被拒(`Failed to find browser context for id default`)。已修(`archive.mjs` 把 real 的簿记值规范成 `null`)并记入 **坑-33** |
+| **测试** | `316/316`(既有 306 + 接线 7 + real 寻址 3),零红;既有断言一条未改 |
+| **P2b 实测(真 Chromium)** | `persona`/`disposable`:`real` + 自己两条档案,闸 = 省略 BLOCK / 自己 ALLOW / 别人 BLOCK;`dispose()` 后 **disposable 的 context 真消失,persona 的还在**;`real`:只有一条、寻址为 `null`、省略放行 |
+| **隔离(真浏览器)** | persona 的 context 写入 cookie 后:persona jar = `["only_persona"]`,**real jar = `[]`** |
+| **CLI 通路** | `--profile-kind persona|disposable` → `listProfiles()` 与 kind 一致;快照 397 字符含 `hello ouuut` |
+| **残留** | CLI 通路的 `real` 未在 Linux 上跑(需档案目录参数,本机 shell 守卫拦那个字面量);`real` 的模块级运行已验 |
