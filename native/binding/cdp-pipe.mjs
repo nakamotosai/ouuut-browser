@@ -21,6 +21,9 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import net from "node:net";
 
+// 诊断里的启动参数要脱敏(代理凭据不落日志,见 proxy.mjs)
+import { describeArgs, redactProxy } from "./proxy.mjs";
+
 const NUL = 0x00;
 
 /** 一条 CDP 消息超时(毫秒)。pipe 是不会"断线"的,所以必须有超时兜底。 */
@@ -285,7 +288,9 @@ export function spawnCdpPipe({
   function diagnoseExit() {
     if (!exitInfo) return `${name} 还没退出`;
     const ms = Date.now() - startedAt;
-    const err = stderrText();
+    // ⚠️ **stderr 也要脱敏**:对端可能把自己的启动参数(含 `--proxy-server=socks5://u:p@h`)打进 stderr,
+    // 而那一段会被原样拼进诊断 —— 2026-10-25 写这条用例时真抓到的第二条泄漏路径。
+    const err = redactProxy(stderrText());
     const parts = [`${name} 退出(code=${exitInfo.code} signal=${exitInfo.signal},存活 ${ms} ms)`];
     if (ms < 2000 && err.trim() === "") {
       parts.push(
@@ -299,7 +304,9 @@ export function spawnCdpPipe({
       parts.push("运行期退出(不是启动失败)");
     }
     if (transportErrors.length > 0) parts.push(`传输层:${transportErrors.join(" / ")}`);
-    parts.push(`启动参数:${spawnArgs.join(" ")}`);
+    // ⚠️ **启动参数要脱敏再打**:`--proxy-server=socks5://user:pass@host` 就在这串里,
+    // 原样拼出去等于"出错一次就把凭据写进日志"(F13 要求凭据不落日志)。
+    parts.push(`启动参数:${describeArgs(spawnArgs)}`);
     return parts.join("\n");
   }
 

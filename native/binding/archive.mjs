@@ -36,6 +36,8 @@
 // **`real` 的特殊性**:它是使用者的真实身份。agent 能**读到它的存在**(否则不能告诉用户
 // "别在 real 里跑任务"),但**不能创建第二个、不能销毁它** —— 这两条做成硬错误。
 
+import { parseProxy, redactProxy } from "./proxy.mjs";
+
 /** 三种 kind,顺序即文档顺序。 */
 export const KINDS = Object.freeze(["real", "persona", "disposable"]);
 
@@ -108,10 +110,15 @@ function normalizeProfile(raw, index) {
   //   * 任意假 id → 同样失败
   // ⇒ real 的簿记值恒为 `null`(语义:**省略**),**不接受**调用方传字符串进来 ——
   //   传了不会"更严格",只会让真机报错(这正是 2026-10-25 接线时发现的缝隙)。
+  // **按档案绑代理**(F13):代理串在这里就校验,别拖到 launch 才炸。
+  // 对外(listProfiles)只给**脱敏**形式;原文留在 `_proxy` 里,只给"丢给浏览器"那一步用。
+  const proxy = parseProxy(raw.proxy ?? null);
   const isReal = kind === "real";
   return Object.freeze({
     id,
     name,
+    proxy: proxy ? proxy.redacted : null,
+    _proxy: proxy ? proxy.raw : null,
     kind,
     isDefault: isReal,
     // 内部簿记,不出现在 listProfiles() 的对外形状里
@@ -182,7 +189,7 @@ export function createArchive({ profiles = [] } = {}) {
       const out = [];
       for (const p of byId.values()) {
         if (destroyed.has(p.id)) continue;
-        out.push({ id: p.id, name: p.name, isDefault: p.isDefault, kind: p.kind });
+        out.push({ id: p.id, name: p.name, isDefault: p.isDefault, kind: p.kind, proxy: p.proxy ?? null });
       }
       return { profiles: out };
     },
@@ -196,7 +203,7 @@ export function createArchive({ profiles = [] } = {}) {
      * 三种 kind 的落地:建档案。
      * `real` **不许建** —— 它只能来自"本机已存在",不是 agent 的产物。
      */
-    createProfile({ id, name, kind, browserContextId } = {}) {
+    createProfile({ id, name, kind, browserContextId, proxy } = {}) {
       if (kind === "real") {
         throw new ArchiveError(
           "real 档案不能由 agent 创建 —— 它代表使用者的真实身份",
@@ -209,10 +216,10 @@ export function createArchive({ profiles = [] } = {}) {
       if (byId.has(id) && !destroyed.has(id)) {
         throw new ArchiveError(`档案 id 已存在:${id}`, INVALID_ARGUMENT);
       }
-      const p = normalizeProfile({ id, name, kind, browserContextId }, byId.size);
+      const p = normalizeProfile({ id, name, kind, browserContextId, proxy }, byId.size);
       destroyed.delete(id);
       byId.set(id, p);
-      return { id: p.id, name: p.name, isDefault: p.isDefault, kind: p.kind };
+      return { id: p.id, name: p.name, isDefault: p.isDefault, kind: p.kind, proxy: p.proxy };
     },
 
     /** 销毁。`real` 不许销毁;销毁后该档案的绑定一并清掉,免得留下悬空绑定。 */
@@ -253,6 +260,11 @@ export function createArchive({ profiles = [] } = {}) {
      * `browserContextId` **由句柄自动注入**,调用方**没有参数**能覆盖它 ——
      * 这是结构性的,不依赖调用方守规矩。
      */
+    /** **内部用**:该档案绑的代理原文(含凭据)。除了丢给 Chrome,别处一律用 `listProfiles()` 里那份脱敏的。 */
+    proxyFor(profileId) {
+      return require(profileId)._proxy;
+    },
+
     cookiesFor(profileId, send) {
       const p = require(profileId);
       if (typeof send !== "function") {

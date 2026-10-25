@@ -232,3 +232,33 @@ test("它们不该被误列进禁止项", () => {
     assert.notEqual(bad, "--no-sandbox");
   }
 });
+
+// ---- 按档案绑代理(F13):两条路的**分流** -----------------------------------
+
+test("★ 代理按 kind 分流:persona/disposable 走 context 级(不给 --proxy-server)", () => {
+  for (const kind of ["persona", "disposable"]) {
+    const { args } = plan(["--profile-kind", kind, DIR_FLAG, DIR_VALUE, "--proxy", "socks5://user:pw@proxy:1080"]);
+    assert.ok(
+      !args.some((a) => a.startsWith("--proxy-server")),
+      `${kind} 的出口在 createBrowserContext 上;给了浏览器级 --proxy-server 会把默认 context 也套进去`,
+    );
+    assert.ok(!args.some((a) => a.startsWith("--proxy-bypass-list")), `${kind} 不该出现浏览器级绕过列表`);
+  }
+});
+
+test("★ 代理按 kind 分流:real 与没选 kind 时走浏览器级(默认 context 只能这么挂)", () => {
+  const real = plan(["--profile-kind", "real", DIR_FLAG, DIR_VALUE, "--proxy", "socks5://proxy:1080"]).args;
+  assert.ok(real.includes("--proxy-server=socks5://proxy:1080"), "real 必须走浏览器级");
+  const bypass = real.find((a) => a.startsWith("--proxy-bypass-list="));
+  assert.ok(bypass.includes("*.ts.net"), "浏览器级也要带绕过列表");
+
+  const none = plan(["--proxy", "http://proxy:8080"]).args;
+  assert.ok(none.includes("--proxy-server=http://proxy:8080"), "没选 kind(没有档案层)时同样走浏览器级");
+});
+
+test("没给 --proxy 时两条路都不出现代理参数", () => {
+  for (const argv of [[], ["--profile-kind", "persona", DIR_FLAG, DIR_VALUE]]) {
+    const { args } = plan(argv);
+    assert.ok(!args.some((a) => a.startsWith("--proxy")), `${argv.join(" ") || "(默认)"} 不该有代理参数`);
+  }
+});

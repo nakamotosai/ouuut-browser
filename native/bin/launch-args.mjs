@@ -18,6 +18,8 @@
 //   | WebGL | **不加** `--enable-unsafe-swiftshader`(Playwright 无头时会自动加) |
 
 import path from "node:path";
+
+import { PROXY_BYPASS_LIST } from "../binding/proxy.mjs";
 import os from "node:os";
 
 // 三种档案的**唯一来源**是档案引擎 —— 另抄一份迟早会漂(F3 的 kind 就是那三个)
@@ -342,9 +344,15 @@ export function buildBrowserArgs(opts = {}, env = {}) {
   const userDataDir = opts.userDataDir || defaultUserDataDir(opts.namespace, opts.pid ?? process.pid);
   args.push(`--user-data-dir=${userDataDir}`);
 
-  if (opts.proxy) {
+  // 代理的两条路(F13,别混):
+  //  * `persona` / `disposable` —— 出口是 **context 级**的(`session-profiles.mjs` 里给
+  //    `Target.createBrowserContext` 传 `proxyServer`)。这里**不能**再给浏览器级 `--proxy-server`,
+  //    否则连默认 context(real)一起被套上那个出口。
+  //  * `real` / 没选 kind —— 默认 context 挂不了 context 级代理,只能走浏览器级。
+  const proxyPerContext = opts.profileKind === "persona" || opts.profileKind === "disposable";
+  if (opts.proxy && !proxyPerContext) {
     args.push(`--proxy-server=${opts.proxy}`);
-    args.push("--proxy-bypass-list=<-loopback>;localhost;127.0.0.1;*.ts.net");
+    args.push(`--proxy-bypass-list=${PROXY_BYPASS_LIST}`);
   }
 
   // ---- 自我检查:绝不把"指纹来源"混进来 ----

@@ -18,6 +18,12 @@
 //   | `persona`    | `Target.createBrowserContext { disposeOnDetach:false }`| 留在该 user-data-dir 里 |
 //   | `disposable` | `Target.createBrowserContext { disposeOnDetach:true }` | 不留痕(detach 即销毁) |
 //
+// **按档案绑代理(F13)**:`Target.createBrowserContext` 支持 `proxyServer` / `proxyBypassList`
+// (Chromium 156 源码:`content/browser/devtools/protocol/target_handler.cc` 的 `CreateBrowserContext`),
+// 所以 persona/disposable 的出口是**context 级**的 —— 同一个浏览器里两个档案走两个出口。
+// ⚠️ `real` 用的是**默认 context**,没有地方给它挂 `proxyServer`;它的出口只能靠浏览器级
+// `--proxy-server`(见 `launch-args.mjs` 里那条按 kind 分流的规则)。
+//
 // 这张表与 `archive.mjs` 头部 ADR-007 的 kind 表一一对应 —— kind 的语义**只在那边定义**,
 // 这里只做「把它落到 Chrome 的哪个池」这一件事,不重新发明一套。
 //
@@ -30,6 +36,7 @@
 // (见 `ouuut-runtime.mjs` 里 `archive` 缺席时那条路)。
 
 import { createArchive, KINDS, ArchiveError, INVALID_ARGUMENT } from "./archive.mjs";
+import { parseProxy, PROXY_BYPASS_LIST } from "./proxy.mjs";
 
 /** 会话里 `real` 档案的簿记 id —— 它是机器上恰好一个的默认档案,由 `--user-data-dir` 决定。 */
 const REAL_PROFILE_ID = "real";
@@ -53,6 +60,7 @@ const DEFAULT_NAMES = Object.freeze({
  * @param {string|null} [o.userDataDir] 档案目录(CLI 显式给的那个;没给 = 没给)
  * @param {string|null} [o.profileId]   档案 id(不传时 persona/disposable 用 kind 当 id)
  * @param {string|null} [o.name]        档案名(不传时用 kind 的默认名)
+ * @param {string|null} [o.proxy]       该会话档案的出口(`socks5://user:pass@host:port`);只给 persona/disposable
  * @returns {Promise<{archive: object|null, profiles: Array, sessionProfileId: string|null, dispose: () => Promise<void>}>}
  */
 export async function openSessionProfiles({
@@ -61,6 +69,7 @@ export async function openSessionProfiles({
   userDataDir = null,
   profileId = null,
   name = null,
+  proxy = null,
 } = {}) {
   // 没选 kind:**不建浏览器 context,也不建档案引擎**。今天怎么跑,现在还怎么跑。
   if (kind === null) {
@@ -82,6 +91,8 @@ export async function openSessionProfiles({
   }
 
   const definitions = [];
+  // 代理串在这里校验一次:`real` 用不上它(默认 context 挂不了),所以只给被选中的 kind。
+  const parsedProxy = parseProxy(proxy);
 
   // `real` 恒为默认那一档。**给了档案目录**时它就在会话里(它代表这个 user-data-dir 的默认身份);
   // 没给目录 = 会话用的是本次会话专用的临时目录,那里的默认 context **不是**使用者的真实身份,
@@ -109,12 +120,24 @@ export async function openSessionProfiles({
       );
     }
     sessionProfileId = REAL_PROFILE_ID;
+    // `real` = 默认 context,**没有**挂 proxyServer 的地方 —— 调用方给了代理就必须明说,
+    // 静默忽略会让人以为"绑上了"(浏览器级那条路见 launch-args 的按 kind 分流)。
+    if (parsedProxy) {
+      throw new ArchiveError(
+        "real 档案用默认 browser context,挂不了 context 级代理;real 会话的出口请走浏览器级 --proxy",
+        INVALID_ARGUMENT,
+      );
+    }
   } else {
     const id = typeof profileId === "string" && profileId !== "" ? profileId : kind;
     const nickname = typeof name === "string" && name !== "" ? name : DEFAULT_NAMES[kind];
     // persona 要**留在** user-data-dir 里(长期画像),disposable 用完即弃 —— 差别就在这一个布尔。
     const created = await cdp.send("Target.createBrowserContext", {
       disposeOnDetach: kind === "disposable",
+      // **出口绑在这个 context 上**(F13)。凭据会经这里交给浏览器 —— 不要打印它。
+      ...(parsedProxy
+        ? { proxyServer: parsedProxy.chromeValue, proxyBypassList: PROXY_BYPASS_LIST }
+        : {}),
     });
     const contextId = created?.browserContextId;
     if (typeof contextId !== "string" || contextId === "") {
@@ -123,7 +146,13 @@ export async function openSessionProfiles({
         INVALID_ARGUMENT,
       );
     }
-    definitions.push({ id, name: nickname, kind, browserContextId: contextId });
+    definitions.push({
+      id,
+      name: nickname,
+      kind,
+      browserContextId: contextId,
+      proxy: parsedProxy ? parsedProxy.raw : null, // 档案簿记里保留原文,但 listProfiles 只暴露脱敏形式
+    });
     sessionProfileId = id;
     if (kind === "disposable") disposableContextId = contextId;
   }

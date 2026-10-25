@@ -255,3 +255,39 @@ test("没给 --profile-kind 时:不建 context,default 与今天逐字段一致"
   assert.equal(commands().length, 0, "不该向浏览器发任何命令");
   await session.dispose(); // 空收尾也必须可调用
 });
+
+// ---- 按档案绑代理(F13)----------------------------------------------------
+
+test("★ persona 的出口绑在 context 上(proxyServer + 绕过列表)", async (t) => {
+  const { cdp, commands, dir } = boot(t);
+  const proxy = "socks5://127.0.0.1:41105";
+  const session = await openSessionProfiles({
+    cdp, kind: "persona", userDataDir: path.join(dir, "profile"), proxy,
+  });
+  const created = commands().find((c) => c.method === "Target.createBrowserContext");
+  assert.equal(created.params.proxyServer, proxy, "出口必须交给 createBrowserContext(不是浏览器级)");
+  assert.ok(created.params.proxyBypassList.includes("<-loopback>"), "绕过列表要一起给");
+  // 对外只暴露脱敏形式(没凭据时与原串相同)
+  const listed = session.profiles.find((p) => p.id === session.sessionProfileId);
+  assert.equal(listed.proxy, proxy);
+});
+
+test("★ 带凭据的代理:档案只暴露脱敏形式,原文不给外面看", async (t) => {
+  const { cdp, dir } = boot(t);
+  const session = await openSessionProfiles({
+    cdp, kind: "persona", userDataDir: path.join(dir, "profile"),
+    proxy: "socks5://user:SECRET@proxy.example:1080",
+  });
+  const listed = session.profiles.find((p) => p.id === session.sessionProfileId);
+  assert.equal(listed.proxy, "socks5://***@proxy.example:1080", "对外必须是脱敏串");
+  assert.ok(!JSON.stringify(session.profiles).includes("SECRET"), "整个 profiles 列表里都不许有凭据");
+});
+
+test("★ real + 代理:必须报错,不许静默忽略(默认 context 挂不了 context 级代理)", async (t) => {
+  const { cdp, dir } = boot(t);
+  await assert.rejects(
+    () => openSessionProfiles({ cdp, kind: "real", userDataDir: path.join(dir, "profile"), proxy: "socks5://p:1080" }),
+    (e) => /默认 browser context/.test(e.message),
+    "静默忽略会让人以为绑上了",
+  );
+});

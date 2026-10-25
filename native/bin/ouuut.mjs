@@ -62,6 +62,9 @@ export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.ar
       cdp,
       kind: opts.profileKind,
       userDataDir: opts.userDataDir,
+      // 出口绑在**会话档案**上(F13):persona/disposable 由 createBrowserContext 带 `proxyServer`;
+      // `real` 走浏览器级 `--proxy-server`(见 launch-args 的按 kind 分流)。
+      proxy: opts.proxy,
     });
   } catch (err) {
     await cdp.close();

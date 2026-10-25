@@ -273,3 +273,24 @@ test("★ Windows:两个实例并发 —— 管道名必须每次随机,否则�
   assert.deepEqual(ra, { echo: { who: "A" } });
   assert.deepEqual(rb, { echo: { who: "B" } });
 });
+
+// ---- 诊断里的启动参数必须脱敏(F13:凭据不落日志)--------------------------
+
+test("★ 诊断打印启动参数时要抹掉代理凭据", async (t) => {
+  const cdp = spawnCdpPipe({
+    exe: process.execPath,
+    // 一个"启动就退"的对端,外加一条**带凭据的代理参数** —— 正是 diagnoseExit 会打印的那串
+    args: ["-e", "process.exit(0)", "--proxy-server=socks5://user:SECRET-PW@proxy.example:1080"],
+    name: "带代理的对端",
+    useNamedPipes: false,
+    timeoutMs: 2_000,
+  });
+  t.after(() => cdp.close().catch(() => {}));
+  await new Promise((r) => setTimeout(r, 600));
+
+  const d = cdp.diagnoseExit();
+  assert.ok(d.includes("启动参数"), "这条用例的前提是诊断里确实会打印启动参数");
+  assert.ok(!d.includes("SECRET-PW"), `凭据漏进诊断了:\n${d}`);
+  assert.ok(!d.includes("user:"), "用户名也属凭据");
+  assert.ok(d.includes("***@"), "应当留下 ***@ 的痕迹(说明这里本来是带凭据的)");
+});
