@@ -10,7 +10,7 @@
 ## 一句话现状
 
 装好的 0.1.3 能验签安装、能起浏览器(CDP 走命名管道,不开端口)、能建标签页、
-能出带真文本的快照。全量回归 **318/318**,公开化闸 **0 违规(310 个受控文件)**。
+能出带真文本的快照。全量回归 **全绿(Windows 0 跳过;Linux 红恒为 0)**,公开化闸 **0 违规(310 个受控文件)**。
 
 ```
 version  = Chrome/156.0.8078.47
@@ -24,8 +24,8 @@ snapshot = 454 字符 → heading "hello ouuut" / button "pay now"
 
 | 命令 | 真实返回 |
 |---|---|
-| `node --test native/binding/*.test.mjs native/bin/*.test.mjs` | `# tests 306 / # pass 306 / # fail 0`(约 3.5 s) |
-| `node tools/check-public-ready.mjs` | `✅ 可以公开:检查了 305 个受版本控制的文件,没有 ADR-010 材料或密钥`(该轮为 304;本轮新增 `docs/下一步方案.md` 后为 305) |
+| `node --test native/binding/*.test.mjs native/bin/*.test.mjs` | `# tests 318 / # pass 318 / # fail 0`(该行为收口时读数;用例会增长,别把这个数当常量) |
+| `node tools/check-public-ready.mjs` | `✅ 可以公开:检查了 305 个受版本控制的文件,没有 ADR-010 材料或密钥`(**该行是那一轮的读数**;此后陆续新增文件,现为 **310** —— 见 §一句话现状) |
 | 安装(`tools/install-release.mjs` —— **这是真名**;旧文写的 `native/bin/ouuut-install.mjs` 从来不存在) | `493` 个文件 → `F:\apps\ouuut-browser\0.1.3`(盘上 494 = 493 + 运行时 `debug.log`) |
 | 冒烟(`.logs\run-smoke.ps1 -Script .logs\smoke.js`) | `has hello = true` / `has pay now = true` / `EXITCODE=0` |
 | `git log --oneline` | 头 = `3dec593`(收口后) |
@@ -89,7 +89,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 1. ✅ **干净读数 —— 已取得**(工具 `probe/tools/clean_reading_via_ouuut.mjs`):`bot-detector` 16 项 **0 红**
    (`--headless` 1 黄 = 屏幕 800×600;有头 0 黄)。**顺带查出并修掉一个真 bug**(坑-35)。
    **剩**:把它做成**探针 target 适配器**(产出 `matrix.json` 行、进对照表);
-2. ✅ **`ouuut.auditWebrtc()` 真跑 —— 已完成**(公网候选 **0**;工具 `probe/tools/webrtc_audit_via_ouuut.mjs`);
+2. ✅ **`ouuut.auditWebrtc()` 真跑 —— 已完成**(公网候选 **0**;工具 `probe/tools/webrtc_audit_via_ouuut.mjs`。
+   ⚠️ 判据是 `ok === true && public === 0`:失败时 counts 全 0、`leaks` 为空,**别当通过** —— 工具会打 `__VERDICT__`);
 3. ✅ **`creepjs` 判据自洽性复核 —— 已完成(2026-10-25)**:那两轮的差异来自 `a2ff8c6` 同时换掉的
    **解析器与判据**(判据是决定性的那一半),`033825` 那份产物**不可比**;守卫已加并改正过两版。
    结论与证据见 `docs/里程碑.md` M0 与 `docs/下一步方案.md` P8。
@@ -202,7 +203,7 @@ ssh vps-jp 'tar -xzf /tmp/ouuut-harness.tgz -C /tmp/ouuut-p3/harness/package/ego
 | 观测 | 值 | 怎么测的 |
 |---|---|---|
 | `vps-jp` 是真 Linux 服务器 | Ubuntu 24.04.5 · aarch64 · 4 vCPU · 24 GB · Node v24.22.1 · `chromium`(snap)+ `docker` 已装 | `ssh vps-jp 'uname -a; nproc; free -m; df -h'` |
-| **Linux 上的测试基线** | **`306 条 / 298 过 / 2 红 / 6 跳过`** | `git archive HEAD` → `scp` → `node --test native/binding/*.test.mjs native/bin/*.test.mjs` |
+| **Linux 上的测试基线**(P2a **之前**那棵树,历史值) | **`306 条 / 298 过 / 2 红 / 6 跳过`** | `git archive HEAD` → `scp` → `node --test native/binding/*.test.mjs native/bin/*.test.mjs` |
 | 2 条红的位置与性质 | `cdp-pipe.test.mjs:186`、`task-spaces.test.mjs:167`,均 `ECONNRESET` ⇒ **通道片** | 同上 |
 | 6 条 skip 的性质 | **2 条平台门**(`skip: process.platform !== "win32"` —— `cdp-pipe.test.mjs:250/264`)+ **4 条 `t.skip("harness dist 未构建")`**(`ouuut-runtime.test.mjs:59,70,83,94`) | `node --test` 的 TAP `# SKIP` 行 + `grep -n "t.skip" native/binding/ouuut-runtime.test.mjs` |
 | 本机可用的替代算力 | 24 逻辑核 / 32 GB RAM;`C:` ≈654 GB(系统盘,随用漂移)、`D:` 934.8 GB、**`E:` 5474.3 GB** 空闲;`vmcompute` 已 Running;Sandbox 未启用;WSL 未装发行版 | `Get-ComputerInfo` / `Get-PSDrive` / `Test-Path` |
@@ -222,8 +223,8 @@ M5 段旧的「6 条 skip 是平台门」说法未随 M0 一起清除、P8 把�
 |---|---|
 | **改了什么** | `native/binding/cdp-pipe.mjs`:传输层流的 `error` 统一走 `noteTransportError`(**只记不拒**),**读端 stdio[4] 与写端 stdio[3] 两端都挂**;`diagnoseExit()` 带上传输层错误;`exit` 时若已知传输层报过错,**不再等那 2 秒兜底** |
 | **根因** | POSIX 上 `child.stdio[3]` 没挂 `error`;对端一死它抛 `ECONNRESET` ⇒ **未捕获异常**,报错乱窜到别的用例上 ⇒ 一条根因伪装成两条无关失败(`cdp-pipe.test.mjs:186` + `task-spaces.test.mjs:167`)。记入 `docs/坑与解法.md` **坑-31** |
-| **Windows** | `318/318`(0 跳过) |
-| **Linux** | **红恒为 0**;固定跳过 6 条 = 2 条平台门 + 4 条 `harness dist` 门(dist 就位时那 4 条会真跑,故"通过数"随构建状态变;总数 318) |
+| **Windows** | 全绿,0 跳过 |
+| **Linux** | **红恒为 0**;跳过数取决于 harness `dist/` 是否就位(缺席 6 条 = 2 平台门 + 4 dist 门;就位 2 条) |
 | **真浏览器(Linux)** | `Chrome/156.0.8078.47` → `createTab` → 快照 **397 字符**,含 `heading "hello ouuut"` / `button "pay now"` / 真 `[frame …]`(OOPIF) |
 | **ADR-005** | `ss -ltnp` 连续 4 次采样,chromium / node **零监听套接字** |
 | 新坑 | **坑-31**(POSIX 写端流错误把诊断冲掉)、**坑-32**(snap 私有 `/tmp` ⇒ `file://` 页面报「couldn't be accessed」,页面要放 `$HOME`) |

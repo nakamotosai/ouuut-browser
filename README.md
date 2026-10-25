@@ -16,7 +16,7 @@
 
 第一步 **P1 · POSIX 通道分支已完成**(2026-10-25)—— Linux 侧红从 2 变 **0**,Windows 保持全绿;
 **真 Chromium 已在 `vps-jp` 上跑通**(快照含 `hello ouuut` / `pay now`,且全程零监听端口)。
-Linux 的**红恒为 0**;跳过固定 6 条(2 条平台门 + 4 条 `harness dist` 门),其余全过 —— 故不写死绝对条数,免得新增用例就过期。
+Linux 的**红恒为 0**;跳过数**取决于 harness `dist/` 是否就位** —— 缺席时 6 条(2 条平台门 + 4 条 `dist` 门),就位时 2 条(那 4 条会真跑)。故不写死绝对条数,免得新增用例就过期。
 
 **下一个是 `P8 · 检测基准收尾`**(用我们自己的驱动跑 `bot-detector` 取干净读数 + `auditWebrtc()` 真跑;
 另含 **creepjs 判据自洽性复核** —— 见 `docs/里程碑.md` M0 那张三轮表)。
@@ -121,7 +121,7 @@ snapshot = 454 字符,含 heading "hello ouuut" / button "pay now"
 - **M5 无头 / 服务器** — ✅ 有头无头同一套参数 + 多机编排;真服务器实跑待做
 - **M6 行为** — ✅ 内容驱动节奏,停留时间与长度相关性 r=0.91~0.96
 - **M7 分发** — ✅ Ed25519 签名 · 原子更新 · 材料审查闸 · 第三方安装 · **端到端跑通**
-- **全量回归** — **Windows 318 / 318**;Linux(`vps-jp`)**红恒为 0**(跳过 6 条 = 2 平台门 + 4 `harness dist` 门);真 Chromium 已在 Linux 上跑通(快照含 `hello ouuut` / `pay now`,零监听端口)
+- **全量回归** — **Windows 全绿(0 跳过)**;Linux(`vps-jp`)**红恒为 0**(跳过数取决于 harness `dist/` 是否就位:缺席 6 条 / 就位 2 条);真 Chromium 已在 Linux 上跑通(快照含 `hello ouuut` / `pay now`,零监听端口)
 
 ---
 

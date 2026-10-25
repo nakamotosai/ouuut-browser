@@ -112,23 +112,21 @@ export function auditCandidates(candidates) {
   };
 }
 
+/** 启动期的**暂时性**失败 —— 值得重试,而不是判死。 */
+const TRANSIENT = /Execution context was destroyed|Cannot find context|wasn't found|Target closed|Session with given id/i;
+
 /**
- * 没有给 `sessionId` 时,**自己挂一个 page 的 session**。
+ * 挑一个适合 evaluate 的 page。
  *
- * `Runtime.evaluate` **必须有 target 上下文** —— 直接对着浏览器主通道发,会得到
- * `'Runtime.evaluate' wasn't found`(2026-10-25 在真机上就是这么炸的:`ouuut.auditWebrtc()`
- * 从 CLI 脚本里裸调,拿不到 page session,于是这个"自检 API"其实一直不可用)。
+ * **优先"真页面"**:启动时那个 `chrome://newtab/` 在换 document 的窗口里 evaluate 会得到
+ * `Execution context was destroyed` —— 2026-10-25 实测:**照着"不挑页"的写法,同一条命令 10 次里 7 次失败**。
+ * 这就是为什么这里要按 URL 优先挑 https/file 页,而不是无脑取 `pages[0]`。
  */
-async function resolvePageSession(cdp, timeoutMs) {
+async function pickPageTarget(cdp, timeoutMs) {
   const t = await cdp.send("Target.getTargets", {}, { timeoutMs });
   const pages = (t?.targetInfos ?? []).filter((x) => x.type === "page");
-  if (pages.length === 0) return undefined;
-  const a = await cdp.send(
-    "Target.attachToTarget",
-    { targetId: pages[0].targetId, flatten: true },
-    { timeoutMs },
-  );
-  return a?.sessionId;
+  const real = pages.filter((x) => /^(https?|file):/i.test(x.url ?? ""));
+  return real[0] ?? pages[0];
 }
 
 /** 探针拿不到结果时的标准返回 —— **不通过**不是"没泄漏"。 */
@@ -148,36 +146,52 @@ function noResult(error) {
  * 需要 `Runtime.evaluate` —— 这是一次**自检**,不是正常操作路径,所以用它是合适的;
  * 正常驱动路径仍然按住 `Runtime.enable`(ADR-005)。
  *
+ * ⚠️ **消费这个返回值时:`ok === false` 时 `counts` 全是 0、`leaks` 是空数组** ——
+ * 那只表示"**没量成**",**不是**"公网候选 = 0"。判据必须**先看 `ok`**(见坑-36)。
+ *
  * @returns {{ok: boolean, counts: object, leaks: Array, warnings: Array, error: string|null}}
  */
 export async function auditWebrtc({ cdp, gatherMs = 2_000, timeoutMs = 20_000, sessionId } = {}) {
   const expression = buildWebrtcProbeScript({ gatherMs });
-
+  // 调用方给了 sessionId 就只试一次(他要为自己的选择负责);
+  // 没给 ⇒ 自己去挂页面,允许重试 —— 挂到启动页会有**暂时性**失败。
+  const attempts = sessionId ? 1 : 4;
+  const fromCaller = Boolean(sessionId);
   let sid = sessionId;
-  if (!sid) {
-    // 挂不上就退回"无 session",让下面那条错误把原因说清楚 —— 不要在这里抛,
-    // 那会让调用方以为"自检失败"是通道坏了。
-    sid = await resolvePageSession(cdp, timeoutMs).catch(() => undefined);
-  }
+  let lastErr;
 
-  let res;
-  try {
-    res = await cdp.send(
-      "Runtime.evaluate",
-      { expression, awaitPromise: true, returnByValue: true, silent: true },
-      { timeoutMs, ...(sid ? { sessionId: sid } : {}) },
-    );
-  } catch (e) {
-    return noResult(
-      `自检没能执行:${e?.message ?? e}(没有可用的 page 上下文时会这样 —— ` +
-        `先建一个标签页再调,或把 page 的 sessionId 传进来)`,
-    );
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      if (!sid) {
+        const page = await pickPageTarget(cdp, timeoutMs);
+        if (page) {
+          const a = await cdp.send(
+            "Target.attachToTarget",
+            { targetId: page.targetId, flatten: true },
+            { timeoutMs },
+          );
+          sid = a?.sessionId;
+        }
+      }
+      const res = await cdp.send(
+        "Runtime.evaluate",
+        { expression, awaitPromise: true, returnByValue: true, silent: true },
+        { timeoutMs, ...(sid ? { sessionId: sid } : {}) },
+      );
+      const value = res?.result?.value;
+      if (!value || typeof value !== "object") {
+        return noResult("**未通过**:探针没有返回结果(页面可能禁止了 WebRTC 或 evaluate 被拦)");
+      }
+      const verdict = auditCandidates(value.candidates ?? []);
+      return { ...verdict, error: value.error ?? null };
+    } catch (e) {
+      lastErr = e;
+      // 只对"暂时性"失败重试;调用方自己给的 sessionId 出错当场收手(那是他的输入问题),
+      // 别的情形把原文如实带出去。
+      if (fromCaller || !TRANSIENT.test(String(e?.message)) || i === attempts - 1) break;
+      sid = undefined; // 重新挑一个页面
+      await new Promise((r) => setTimeout(r, 250));
+    }
   }
-
-  const value = res?.result?.value;
-  if (!value || typeof value !== "object") {
-    return noResult("探针没有返回结果(页面可能禁止了 WebRTC 或 evaluate 被拦)");
-  }
-  const verdict = auditCandidates(value.candidates ?? []);
-  return { ...verdict, error: value.error ?? null };
+  return noResult(`**未通过**:自检没能执行:${lastErr?.message ?? lastErr}`);
 }

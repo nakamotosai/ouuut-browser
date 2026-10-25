@@ -95,8 +95,13 @@ python probe/tools/check_creepjs_classify.py                     # 判据自查:
 node  native/bin/ouuut.mjs nodejs --headless --timeout 60 \
       < probe/tools/clean_reading_via_ouuut.mjs                  # 用自己的驱动取 bot-detector 干净读数
 node  native/bin/ouuut.mjs nodejs --headless --timeout 60 \
-      < probe/tools/webrtc_audit_via_ouuut.mjs                   # auditWebrtc 真跑(判据:公网候选 = 0)
+      < probe/tools/webrtc_audit_via_ouuut.mjs                   # auditWebrtc 真跑(判据见下)
 ```
+
+⚠️ **WebRTC 那个工具的判据是 `ok === true && public === 0`** ——
+**失败时 `counts` 全是 0、`leaks` 是空数组,外形上很像"公网候选 = 0"**,那是"没量成"不是"通过"。
+它会额外打一行 `__VERDICT__`(`PASS` / `NOT_MEASURED` / `FAIL`)并在非 PASS 时给非零退出码。
+(2026-10-25:这条命令曾因**启动竞态** 10 次里 7 次 `NOT_MEASURED`,现已修,重测 10/10 —— 见 `docs/坑与解法.md` 坑-36。)
 
 为什么要单独放这些文件:**判据与自检本身也会错**,而它们错起来是"假绿"。
 2026-10-25 的核验抓到过 `creepjs._classify` 守卫的两版毛病(防假绿造出假红、盖不住名单外键),

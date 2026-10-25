@@ -149,17 +149,37 @@ test("★ auditWebrtc:把候选接上判定,并透传 error", async () => {
   assert.equal(ev.params.awaitPromise, true, "必须等 promise,否则拿到空数组");
 });
 
-test("★ auditWebrtc:evaluate 被拒 → 返回可读原因,**不抛**(自检失败不是通道坏了)", async () => {
+test("★ auditWebrtc:没量成时绝不能被当成通过(counts 全 0 + ok:false)", async () => {
   const cdp = {
-    async send(method) {
-      if (method === "Target.getTargets") return { targetInfos: [] };
+    async send() {
       throw new Error("'Runtime.evaluate' wasn't found");
     },
   };
   const v = await auditWebrtc({ cdp });
   assert.equal(v.ok, false);
-  assert.match(v.error, /自检没能执行/);
-  assert.match(v.error, /Runtime\.evaluate/);
+  assert.match(v.error, /未通过/, "错误消息要显式说「没通过」,免得被读成没问题");
+  assert.equal(v.counts.public, 0, "counts 里的 0 含义是「没量成」—— 判据必须先看 ok");
+});
+
+test("★ auditWebrtc:启动期暂时失败会重试(不把竞态报成「没量成」)", async () => {
+  // 2026-10-25 实测:挂在启动页 chrome://newtab/ 上 evaluate 会在换 document 的窗口里
+  // 报 Execution context was destroyed —— 同一条命令 10 次里 7 次失败。这不是"没量成",
+  // 是"还没稳",必须重试。
+  let n = 0;
+  const cdp = {
+    async send(method) {
+      if (method === "Target.getTargets") {
+        return { targetInfos: [{ targetId: "T-1", type: "page", url: "chrome://newtab/" }] };
+      }
+      if (method === "Target.attachToTarget") return { sessionId: "S-1" };
+      n += 1;
+      if (n === 1) throw new Error("Execution context was destroyed.");
+      return { result: { value: { error: null, candidates: [] } } };
+    },
+  };
+  const v = await auditWebrtc({ cdp });
+  assert.equal(v.ok, true, "第一次撞上换 document 应当重试,而不是判「没量成」");
+  assert.equal(n, 2, "应当恰好重试一次");
 });
 
 test("★ auditWebrtc:探针没返回结果 → 判不通过并说明(不能当成「没泄漏」)", async () => {

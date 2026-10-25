@@ -10,7 +10,18 @@
 const r = await ouuut.auditWebrtc();
 console.log("__WEBRTC__" + JSON.stringify(r));
 
-// 顺带把「抑制开关到底在不在」也报出来 —— 免得只看结论而漏掉"开关根本没传"
-console.log("__ARGS__ " + JSON.stringify(
-  (await ouuut.getBrowserVersion()).currentVersion
-));
+const v = (await ouuut.getBrowserVersion()).currentVersion;
+console.log("__VERSION__ " + JSON.stringify(v));
+
+// ⚠️ **`ok === false` 时 `counts` 全是 0、`leaks` 是空数组** —— 那表示"没量成",
+// **不是**"公网候选 = 0"。所以这里额外打一条显式的判定,并在失败时给非零退出码,
+// 免得把"没量成"当成"通过"写进任何记录里(ADR-014 的判据只能是 `ok === true && public === 0`)。
+if (r.ok && r.counts.public === 0) {
+  console.log("__VERDICT__ PASS(公网候选 = 0;mDNS .local 属缓解,不算泄漏)");
+} else if (!r.ok) {
+  console.log("__VERDICT__ NOT_MEASURED(自检没跑成 —— 不能当成通过):" + r.error);
+  process.exitCode = 1;
+} else {
+  console.log("__VERDICT__ FAIL(公网候选 = " + r.counts.public + ",判失败):" + JSON.stringify(r.leaks));
+  process.exitCode = 1;
+}

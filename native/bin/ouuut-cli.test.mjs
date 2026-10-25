@@ -65,7 +65,8 @@ test("启动参数:disable-features 里不含 ThirdPartyStoragePartitioning", ()
   // ⚠️ 这里原来断言「f.includes("AutomationControlled")」并写着「navigator.webdriver 靠它」——
   // 那是**把 bug 钉住了**:AutomationControlled 是 Blink 特性,放进 `--disable-features` 不生效,
   // 真机检测站如实报 `navigator.webdriver = true`(2026-10-25,坑-35)。
-  // 正确写法在下面那条测试里守:`--disable-blink-features=AutomationControlled`。
+  // 正确写法由 `launch-args.test.mjs` 里那条「navigator.webdriver 必须走 --disable-blink-features」守 ——
+  // 本文件只负责「不许混进 --disable-features」这一半。
   assert.ok(!f.includes("AutomationControlled"), "它是 Blink 特性,不该出现在这份名单里");
 });
 
