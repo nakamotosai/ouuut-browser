@@ -21,7 +21,9 @@
 // 所以反过来:只发白名单里的目录,其余一律不发,并在输出里**列出来**,
 // 让"多了一个没见过的目录"这件事看得见,而不是被静默吞掉。
 
-import { cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -141,22 +143,149 @@ async function walkAll(absDir, relDir) {
   return out;
 }
 
+// ---- 随包发的 JS:入口一个文件 + 实现放 `js/`(P6 / ADR-017)------------------
+//
+// 「一个 tar + node」要成立,JS 就必须**进包**,而且进**签名覆盖的 `payload/`**:
+//   <payload>/ouuut.mjs                        ← 入口(一个文件)
+//   <payload>/js/native/**                     ← 原生层(不发 *.test.mjs)
+//   <payload>/js/harness/package/ego-browser/  ← harness dist + 它运行时唯一的第三方依赖 acorn
+//
+// 为什么**不**打成"真·单文件":harness 的 dist 里有动态 `import()`,还依赖第三方 `acorn`
+// —— 上打包器要么改写 vendored 代码、要么把 acorn 也塞进去,买到的主要是观感(理由写在 ADR-017)。
+//
+// 目录白名单的纪律与浏览器那边一致:**只发列出来的**,不列就不发,免得包里悄悄长出东西。
+
+/** 入口模板:纯粹转发,真正的实现在 `./js/`。 */
+const LAUNCHER = `#!/usr/bin/env node
+// ouuut —— 入口。实现在 ./js/ 下(原生层 + 随包携带的 harness),布局与理由见 ADR-017。
+// 用法:node ouuut.mjs nodejs --script <脚本> [--headless] [--browser <chrome.exe>]
+// 入口单独一个文件,是为了让命令行**不随内部目录结构漂**;别把它当"单文件实现"宣传。
+import { cli } from "./js/native/bin/ouuut.mjs";
+process.exit(await cli());
+`;
+
+const JS_DIRS = [
+  { from: "native/bin", to: "js/native/bin", keep: (n) => n.endsWith(".mjs") && !n.endsWith(".test.mjs") },
+  { from: "native/binding", to: "js/native/binding", keep: (n) => n.endsWith(".mjs") && !n.endsWith(".test.mjs") },
+  { from: "harness/package/ego-browser/dist", to: "js/harness/package/ego-browser/dist", keep: () => true },
+  {
+    from: "harness/package/ego-browser/node_modules/acorn",
+    to: "js/harness/package/ego-browser/node_modules/acorn",
+    keep: () => true,
+  },
+];
+
+/** 单文件白名单(许可证义务 + harness 的元信息)。 */
+const JS_FILES = [
+  ["harness/package/ego-browser/package.json", "js/harness/package/ego-browser/package.json"],
+  ["harness/package/ego-browser/README.md", "js/harness/package/ego-browser/README.md"],
+  ["LICENSES/ego-lite-MIT.txt", "js/LICENSES/ego-lite-MIT.txt"],
+  ["LICENSE", "js/LICENSE"],
+  ["NOTICE", "js/NOTICE"],
+];
+
+/** 把一棵目录树按白名单拷进 `payload/<to>`,返回 manifest 记录。 */
+async function shipTree(payload, fromRoot, relFrom, relTo, keep) {
+  const records = [];
+  const absFrom = path.join(fromRoot, ...relFrom.split("/"));
+  const walkInto = async (absDir, relDir) => {
+    for (const e of await readdir(absDir, { withFileTypes: true })) {
+      const rel = `${relDir}/${e.name}`;
+      if (e.isDirectory()) await walkInto(path.join(absDir, e.name), rel);
+      else if (e.isFile() && keep(e.name)) {
+        const dst = path.join(payload, ...rel.split("/"));
+        await mkdir(path.dirname(dst), { recursive: true });
+        await cp(path.join(absDir, e.name), dst);
+        records.push({ path: rel, sha256: await sha256File(dst), size: (await stat(dst)).size });
+      }
+    }
+  };
+  await walkInto(absFrom, relTo);
+  return records;
+}
+
+/** 把 JS(白名单 + 入口)放进 `payload/`。返回 manifest 记录(payload 相对路径)。 */
+async function shipJs(payload, repoRoot) {
+  const records = [];
+  for (const d of JS_DIRS) {
+    const abs = path.join(repoRoot, ...d.from.split("/"));
+    if (!existsSync(abs)) throw new Error(`要随包发的目录不存在:${d.from}(在发布机上应该存在)`);
+    records.push(...(await shipTree(payload, repoRoot, d.from, d.to, d.keep)));
+  }
+  for (const [from, to] of JS_FILES) {
+    const src = path.join(repoRoot, ...from.split("/"));
+    if (!existsSync(src)) throw new Error(`要随包发的文件不存在:${from}`);
+    const dst = path.join(payload, ...to.split("/"));
+    await mkdir(path.dirname(dst), { recursive: true });
+    await cp(src, dst);
+    records.push({ path: to, sha256: await sha256File(dst), size: (await stat(dst)).size });
+  }
+  await writeFile(path.join(payload, "ouuut.mjs"), LAUNCHER);
+  records.push({
+    path: "ouuut.mjs",
+    sha256: await sha256File(path.join(payload, "ouuut.mjs")),
+    size: Buffer.byteLength(LAUNCHER),
+  });
+  return records;
+}
+
+/** 上一次打包留下的 JS 记录(用于 `--js-only` 重放时把它们换掉)。 */
+const isJsPath = (p) => p === "ouuut.mjs" || p.startsWith("js/");
+
 function parseArgs(argv) {
   const o = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry-run") o.dryRun = true;
+    else if (a === "--js-only") o.jsOnly = true; // 无值开关,必须显式认,否则会被当成"带值"吃掉下一个参数
     else if (a.startsWith("--")) o[a.slice(2)] = argv[++i];
   }
   return o;
 }
 
 const args = parseArgs(process.argv.slice(2));
-if (!args.src || !args.out || !args.version) {
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+if (!args.version || (!args.jsOnly && !args.src) || !args.out) {
   process.stderr.write(
-    "用法: node tools/package-release.mjs --src <构建目录> --out <输出目录> --version <x.y.z> --key <私钥.pem> [--dry-run]\n",
+    "用法: node tools/package-release.mjs --src <构建目录> --out <输出目录> --version <x.y.z> --key <私钥.pem> [--dry-run]\n" +
+      "      node tools/package-release.mjs --out <已有输出目录> --version <x.y.z> --key <私钥.pem> --js-only\n" +
+      "        ↑ 只重放随包发的 JS(入口 + js/)并**重新签名**;用在「只改了 native/、不想再拷贝一遍浏览器」的时候\n",
   );
   process.exit(2);
+}
+
+// `--js-only`:从**已有的** manifest 里拿掉旧的 JS 记录、补上新的,再签一次。
+// 单独一条路的意义:JS 改动频繁,而浏览器部分是 27 GB 的拷贝 —— 不该为了改一行 JS 再拷一遍。
+if (args.jsOnly) {
+  if (!args.key) {
+    process.stderr.write("打包必须签名:缺 --key <私钥.pem>\n");
+    process.exit(2);
+  }
+  const manifestPath = path.join(args.out, "manifest.json");
+  if (!existsSync(manifestPath)) {
+    process.stderr.write(`--js-only 需要已有的清单:${manifestPath} 不存在\n`);
+    process.exit(2);
+  }
+  const payload = path.join(args.out, "payload");
+  if (!existsSync(payload)) {
+    process.stderr.write(`--js-only 需要已有的 payload:${payload} 不存在\n`);
+    process.exit(2);
+  }
+  const prev = JSON.parse(await readFile(manifestPath, "utf8"));
+  const kept = (prev.files ?? []).filter((f) => !isJsPath(f.path));
+  const jsRecords = await shipJs(payload, repoRoot);
+  const manifest = buildManifest({
+    version: args.version,
+    files: [...kept, ...jsRecords],
+    meta: { generatedAt: new Date().toISOString(), platform: "win-x64" },
+  });
+  const signatureBase64 = signManifest(manifest, readFileSync(args.key, "utf8"));
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+  await writeFile(path.join(args.out, "manifest.sig"), signatureBase64 + "\n");
+  process.stdout.write(
+    `\n✅ ${args.out}\n   只顾了 JS:${jsRecords.length} 个文件(其余 ${kept.length} 个沿用上次清单)· 已重新签名\n`,
+  );
+  process.exit(0);
 }
 
 try {
@@ -172,6 +301,9 @@ try {
 
   const report = () => {
     process.stdout.write(`将打包 ${sized.length} 个文件 / ${(total / 1048576).toFixed(1)} MB\n`);
+    process.stdout.write(
+      "随包发的 JS:入口 ouuut.mjs + js/(native + harness dist + acorn + 许可证)\n",
+    );
     process.stdout.write(
       `跳过 ${skippedDirs.length} 个非发布目录:${skippedDirs.slice(0, 8).join(" ")}${skippedDirs.length > 8 ? " …" : ""}\n`,
     );
@@ -218,6 +350,11 @@ try {
     await cp(path.join(args.src, f.path), dst);
     records.push({ path: f.path, sha256: await sha256File(dst), size: f.size });
   }
+
+  // 随包发的 JS:**进签名覆盖的 `payload/`**,不是"另放一个目录"(改一行 JS 不该让完整性覆盖断掉)。
+  const jsRecords = await shipJs(payload, repoRoot);
+  records.push(...jsRecords);
+  process.stdout.write(`随包发的 JS:${jsRecords.length} 个文件(入口 ouuut.mjs + js/)\n`);
 
   const manifest = buildManifest({
     version: args.version,

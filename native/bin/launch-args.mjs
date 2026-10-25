@@ -20,6 +20,7 @@
 import path from "node:path";
 
 import { PROXY_BYPASS_LIST, assertProxyUsable } from "../binding/proxy.mjs";
+import { resolveBrowserExe } from "../binding/paths.mjs";
 import os from "node:os";
 
 // 三种档案的**唯一来源**是档案引擎 —— 另抄一份迟早会漂(F3 的 kind 就是那三个)
@@ -253,11 +254,9 @@ export function parseArgs(argv = []) {
  * @param {object} env  环境变量(取 `OUUUT_BROWSER` / `OUUUT_WINDOW_POSITION` / `OUUUT_WINDOW_SIZE`)
  */
 export function buildBrowserArgs(opts = {}, env = {}) {
-  const exe =
-    opts.browser ||
-    env.OUUUT_BROWSER ||
-    // 本项目的默认产物位置(开发机)
-    "chromium\\src\\out\\Release\\chrome.exe";
+  // 浏览器在哪只有**一处**判断(见 `binding/paths.mjs`):显式 > 环境变量 > 入口旁边(发布) > 仓库(开发)。
+  // 以前这里是相对 **CWD** 的一行字符串,换个目录启动就找不到 —— 发布形态下更不可能对。
+  const exe = resolveBrowserExe({ browser: opts.browser, env });
 
   // 窗口位置/尺寸:选项优先,其次环境变量,最后不给(让窗口管理器决定)。
   // **必须在拼数组之前算** —— 它被用在数组字面量里。

@@ -31,6 +31,7 @@ import { createOuUutRuntime } from "../binding/ouuut-runtime.mjs";
 import { createTaskSpaceRegistry } from "../binding/task-spaces.mjs";
 import { openSessionProfiles } from "../binding/session-profiles.mjs";
 import { assertProxyUsable } from "../binding/proxy.mjs";
+import { resolveHarnessEntry } from "../binding/paths.mjs";
 import { parseArgs, buildBrowserArgs, USAGE } from "./launch-args.mjs";
 
 /**
@@ -97,9 +98,7 @@ export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.ar
       /** 脚本跑完后要把 harness 的回调摘掉,交给它 */
       async disposeHarness() {
         try {
-          const mod = await import(
-            new URL("../../harness/package/ego-browser/dist/src/index.js", import.meta.url).href
-          );
+          const mod = await import(resolveHarnessEntry("index.js", { env }));
           if (typeof mod.disposeEgoSdk === "function") await mod.disposeEgoSdk();
         } catch {
           // harness 没构建 / 没这个导出:不影响收尾
@@ -240,9 +239,7 @@ export async function cli({
     async run({ api, registry, options }) {
       if (typeof runScript === "function") return runScript({ api, registry, options });
       // 交给 harness 的 runMain,并把脚本**显式**传进去
-      const mod = await import(
-        new URL("../../harness/package/ego-browser/dist/src/run.js", import.meta.url).href
-      );
+      const mod = await import(resolveHarnessEntry("run.js", { env }));
       // 交给 harness 的 runMain,并把脚本**显式**传进去。
       // `argv` 给空数组:`ouuut` 自己的选项已经被 `parseArgs` 消费掉了,
       // 把 `["nodejs"]` 原样转给脚本只会让脚本看到无意义的参数。

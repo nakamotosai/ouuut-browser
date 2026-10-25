@@ -38,6 +38,25 @@ P12 公开化 + 发 0.1.4
 
 ---
 
+## 怎么跑(两种形态,入口都只有一个文件)
+
+```bash
+# 1) 开发机(仓库里,浏览器默认取 chromium/src/out/Release/chrome.exe)
+node native/bin/ouuut.mjs nodejs --script 脚本.mjs [--headless]
+
+# 2) 发布包(与浏览器同目录;不用 --browser,它就在入口旁边)
+node <发布目录>/payload/ouuut.mjs nodejs --script 脚本.mjs [--headless]
+```
+
+`--script` 也可以换成 stdin heredoc(`ouuut nodejs <<'JS' ... JS`)。代理、档案、窗口等开关见 `--help`。
+
+发布包**自带** JS(入口 `ouuut.mjs` + `js/` 下的原生层与 harness),且这些文件**进清单与签名** ——
+形态与理由见 **ADR-017**。验收(会验签 + 逐文件哈希 + 冷启动,`--smoke` 还会真开一次浏览器):
+
+```bash
+node tools/verify-shipped-layout.mjs --dir dist/ouuut-<版本>-win-x64 --pub <公钥.pem> [--smoke]
+```
+
 ## 端到端实测(2026-10-25,装好的 0.1.3)
 
 ```
