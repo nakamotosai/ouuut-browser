@@ -92,6 +92,7 @@ test("★ redactProxy:无 scheme 的凭据串也要抹(F2 的兜底)—— 回�
     `--proxy user:${SECRET}@h:1`,
     `user:${SECRET}@h:1`,
     `=user:${SECRET}@h:1`,
+    `--proxy-server=user:@h:1`, // 空口令也要抹(用户名本身也是凭据的一部分)
   ]) {
     const out = redactProxy(c);
     assert.ok(!out.includes(SECRET), `凭据没抹干净:${out}`);
@@ -101,6 +102,29 @@ test("★ redactProxy:无 scheme 的凭据串也要抹(F2 的兜底)—— 回�
 
 test("redactProxy:别误伤 Windows 路径(冒号后带反斜杠的不算凭据)", () => {
   // 核验抓到的误伤:兜底正则第一版会把 `C:\repo\node_modules\foo@1.0.0\index.js` 吞成 `***@1.0.0\index.js`
-  const pathish = "at C:\\repo\\node_modules\\foo@1.0.0\\index.js";
-  assert.equal(redactProxy(pathish), pathish, "诊断里的路径不该被搅");
+  for (const pathish of [
+    "at C:\\repo\\node_modules\\foo@1.0.0\\index.js",
+    "C:\\x\\y:z@w", // 盘符 + 冒号 + `@` 的路径同样不许被当成凭据
+  ]) {
+    assert.equal(redactProxy(pathish), pathish, `诊断里的路径不该被搅:${pathish}`);
+  }
+});
+
+test("★ redactProxy:用户名带反斜杠的域账号凭据**也必须**抹(收窄误伤时曾漏掉这一头)", () => {
+  // 2026-10-25 核验抓到的**漏抹**:把兜底的用户名字符类也对反斜杠设禁之后,
+  // 域账号形状(`DOMAIN\user:pw@host`)整条漏过去 —— 漏抹 = 口令进日志,比误伤路径严重。
+  // 所以两头的字符类是**故意不对称**的:用户名段允许反斜杠,口令段禁止。
+  for (const c of [
+    `--proxy-server=DOMAIN\\user:${SECRET}@h:1080`,
+    `DOMAIN\\user:${SECRET}@h:1080`,
+  ]) {
+    const out = redactProxy(c);
+    assert.ok(!out.includes(SECRET), `域账号凭据没抹干净:${out}`);
+    assert.ok(out.includes("***@"), out);
+  }
+  assert.equal(
+    redactProxy(`socks5://DOMAIN\\user:${SECRET}@h:1080`),
+    "socks5://***@h:1080",
+    "带 scheme 的那条规则(口令段不禁反斜杠)也要照样抹",
+  );
 });

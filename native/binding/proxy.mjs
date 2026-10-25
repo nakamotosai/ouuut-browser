@@ -79,12 +79,18 @@ export function redactProxy(text) {
   return (
     text
       .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]*@/gi, "$1***@")
-      // 兜底:没有 scheme 的 `user:pass@host:port` 同样会出现在诊断的启动参数与 stderr 里。
-      // ⚠️ 别把它读成"这种代理能用":Chromium 156 实测**不收**带凭据的代理串(`ERR_NO_SUPPORTED_PROXIES`,
-      //    有没有 scheme 都一样);但它照样被我们原样拼进 `--proxy-server=…` 并打进诊断,所以照样要抹。
-      // ⚠️ 冒号后**不允许出现反斜杠** —— 否则 Windows 路径(`C:\repo\node_modules\foo@1.0.0\index.js`)
-      //    会被整段吞掉(2026-10-25 核验抓到的误伤)。
-      .replace(/(^|[\s=])([^\s/@:=\\]+:[^\s/@\\]*@)/g, "$1***@")
+      // ⚠️ **别把它读成"这种代理能用"**:`u:p@` 这种带凭据的串 **Chromium 一律不收** ——
+      //    2026-10-25 实测,两条路(浏览器级「无 --profile-kind」与 context 级「--profile-kind persona」)都一样:
+      //      `--proxy socks5://u:p@198.51.100.7:41105` => `net::ERR_NO_SUPPORTED_PROXIES`
+      //      `--proxy socks5://198.51.100.7:41105`     => 出口 129.225.148.47(可用,对照组)
+      //    (父提交注释曾声称"实测能生效",是错的;证据见 `docs/坑与解法.md` 坑-41。)
+      //    抹除的理由**不是**"这种代理能用",而是:这串会被原样拼进 `--proxy-server=...` 并进诊断/错误消息
+      //    —— 见 `native/bin/ouuut.mjs` 的 `--proxy` 拼接口与 `describeArgs`。
+      // ⚠️ 两个字符类**故意不对称**,是踩出来的,别顺手"统一":
+      //    - 用户名段**允许**反斜杠:域账号 `DOMAIN\user:pw@host:port` 的凭据也必须抹(漏抹=口令进日志);
+      //    - 口令段**禁止**反斜杠,并对盘符加前瞻:否则 Windows 路径(`C:\repo\node_modules\foo@1.0.0\index.js`)
+      //      会被整段吞掉(2026-10-25 核验先抓误伤、再抓漏抹,两头都留了用例)。
+      .replace(/(^|[\s=])(?![A-Za-z]:[\\/])([^\s/@:=]+:[^\s/@\\]*@)/g, "$1***@")
   );
 }
 
