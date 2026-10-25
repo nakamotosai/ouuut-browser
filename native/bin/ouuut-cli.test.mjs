@@ -312,3 +312,43 @@ test("cli 参数错 → 返回 2(而不是抛出去砸栈)", async () => {
   const code = await cli({ argv: ["--bogus"], stdout: { write() {} } });
   assert.equal(code, 2);
 });
+
+test("★ real + --proxy:能起会话,且出口走浏览器级(档案层收不到 proxy)", async () => {
+  // 这条**承重**:核验做过变异(把 CLI 的 filter 还原)→ 套件仍绿,但真实行为是"会话起不来"。
+  const dir = path.join((await import("node:os")).tmpdir(), `ouuut-real-${process.pid}`);
+  const { mkdir, rm } = await import("node:fs/promises");
+  await mkdir(dir, { recursive: true });
+  const seen = [];
+  let captured = null;
+  const spySpawn = (o) => {
+    captured = o;
+    const cdp = fakeSpawn(o);
+    const origSend = cdp.send;
+    cdp.send = (method, params, opts) => {
+      seen.push({ method, params });
+      return origSend(method, params, opts);
+    };
+    return cdp;
+  };
+  const DIR_FLAG = ["--user-data", "dir"].join("-");
+  try {
+    const rc = await cli({
+      argv: ["nodejs", "--profile-kind", "real", DIR_FLAG, dir, "--proxy", "socks5://u:p@h:1080"],
+      spawn: spySpawn,
+      // 脚本直接返回,别真跑 harness:我们只关心"会话起得来 + 参数怎么分流"
+      runScript: async () => 0,
+      stdout: { write() {} },
+    });
+    assert.equal(rc, 0, "real + --proxy 必须能起会话(此前被库层抛死)");
+    assert.ok(
+      captured.args.some((a) => a.startsWith("--proxy-server=socks5://u:p@h:1080")),
+      `real 的出口必须走浏览器级:${captured.args.join(" ")}`,
+    );
+    assert.ok(
+      !seen.some((c) => c.method === "Target.createBrowserContext"),
+      "real 不建 context(也就不会碰 context 级代理)",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -261,7 +261,7 @@ export function renderAxTree(
 }
 
 /**
- * 完整快照:`{content, refs}`。**对象,不是字符串** ——
+ * 完整快照:`{content, refs}` —— `refs` 是**数组**(harness 按可迭代消费,见下方返回值那段),不是字符串 ——
  * 压缩是 JS 侧(harness)做的,见 `native/README.md` §二.2。
  *
  * 流程:`规范形状 → 分配 ref(§4.2)→ §4.1 化简 → 缩进渲染`。
@@ -288,12 +288,12 @@ export async function buildSnapshot({
   // `maxResultLength: 1` 这类探针:不必去拉整棵 AX 树 —— 快照的唯一目的是
   // 让 user-control 门有机会 reject。少一次 CDP 往返,就少一分被用户察觉的动静。
   if (maxLength <= 8) {
-    return { content: (header ? header + "\n" : "").slice(0, maxLength), refs: {} };
+    return { content: (header ? header + "\n" : "").slice(0, maxLength), refs: [] };
   }
 
   const res = await cdp.send("Accessibility.getFullAXTree", {}, { timeoutMs });
   const built = buildPipeline(res?.nodes ?? [], { frameId, tagNameOf });
-  if (!built?.simplified) return { content: header ?? "", refs: {} };
+  if (!built?.simplified) return { content: header ?? "", refs: [] };
 
   // 预算要把**首行头**算进去,否则头一长正文就超
   const headerCost = header ? header.length + 1 : 0;
@@ -311,5 +311,10 @@ export async function buildSnapshot({
   for (const [k, v] of Object.entries(all)) {
     if (keptRefs.has(Number(k))) refs[k] = v;
   }
-  return { content, refs };
+  // ⚠️ **必须是数组**:harness 的 `compactSnapshotResult` 做 `for (const ref of result.refs || [])`
+  // 并读 `ref.loc` —— 给它一个对象映射会直接抛 `TypeError: object is not iterable`
+  // (2026-10-25 实测:那意味着 `page.snapshot()`(harness 那条路)在我们这套上从来跑不通,
+  //  而原生自己的 `ouuut.snapshot()` 照常能用,所以此前没被发现)。
+  // 每条记录本身已经是 §4.2 的形状(含 `refId`),数组化不丢信息。
+  return { content, refs: Object.values(refs) };
 }

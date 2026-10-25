@@ -167,7 +167,7 @@ test("★ buildMultiFrameSnapshot:ref 编号**跨 frame 全局唯一**", async (
   });
 
   const snap = await buildMultiFrameSnapshot({ cdp, header: "[p1 测试]" });
-  const refIds = Object.values(snap.refs).map((r) => r.refId);
+  const refIds = snap.refs.map((r) => r.refId);
   assert.equal(refIds.length, 3, "三个按钮各一个 ref");
   assert.equal(new Set(refIds).size, 3, "**编号不许撞车**");
 });
@@ -182,7 +182,7 @@ test("★ buildMultiFrameSnapshot:OOPIF 的 ref 带 sessionId,主 frame 的不�
   });
 
   const snap = await buildMultiFrameSnapshot({ cdp });
-  const records = Object.values(snap.refs);
+  const records = snap.refs;
   const main = records.find((r) => r.name === "主按钮");
   const child = records.find((r) => r.name === "A按钮");
   assert.equal(main.sessionId, undefined, "主 frame 的 ref 不该带 session(走默认 session)");

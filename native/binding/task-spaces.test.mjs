@@ -187,7 +187,7 @@ test("snapshot() 返回 {content, refs} —— 对象,不是字符串", async (t
   const snap = await env.api.snapshot({});
   assert.equal(typeof snap, "object");
   assert.equal(typeof snap.content, "string");
-  assert.equal(typeof snap.refs, "object");
+  assert.ok(Array.isArray(snap.refs), "refs 必须是**数组**(harness 按可迭代消费它;给映射会抛 TypeError)");
 });
 
 test("快照格式:首行是空间/页面头,主体是角色树 + text \"原文\"", async (t) => {
@@ -251,7 +251,7 @@ test("★ snapshot() 默认带上 OOPIF:跨进程按钮出现在快照里,且 re
   assert.match(snap.content, /\[frame T-oopif/, "必须标出帧边界");
   assert.match(snap.content, /跨进程按钮/, "OOPIF 里的按钮必须在快照里");
 
-  const child = Object.values(snap.refs).find((r) => r.name === "跨进程按钮");
+  const child = snap.refs.find((r) => r.name === "跨进程按钮");
   assert.ok(child, "OOPIF 的按钮要拿到 ref");
   assert.equal(child.sessionId, "S-fake-T-oopif", "ref 必须带 session,否则点不到");
   assert.equal(child.frameId, "T-oopif");

@@ -83,3 +83,24 @@ test("绕过列表只有一份(浏览器级与 context 级共用,防漂)", () =>
   assert.ok(PROXY_BYPASS_LIST.includes("<-loopback>"), "loopback 不走代理");
   assert.ok(PROXY_BYPASS_LIST.includes("*.ts.net"), "tailnet 不走代理");
 });
+
+test("★ redactProxy:无 scheme 的凭据串也要抹(F2 的兜底)—— 回退它会让凭据进诊断", () => {
+  // 这条**承重**:核验做过变异(去掉兜底正则)→ 套件仍全绿 ⇒ 也就是说没人守它。
+  // 而那种形状真的会出现在诊断里:`--proxy-server=user:pw@h:1080` 会同时进「启动参数」与 stderr 尾部。
+  for (const c of [
+    `--proxy-server=user:${SECRET}@h:1`,
+    `--proxy user:${SECRET}@h:1`,
+    `user:${SECRET}@h:1`,
+    `=user:${SECRET}@h:1`,
+  ]) {
+    const out = redactProxy(c);
+    assert.ok(!out.includes(SECRET), `凭据没抹干净:${out}`);
+    assert.ok(out.includes("***@"), out);
+  }
+});
+
+test("redactProxy:别误伤 Windows 路径(冒号后带反斜杠的不算凭据)", () => {
+  // 核验抓到的误伤:兜底正则第一版会把 `C:\repo\node_modules\foo@1.0.0\index.js` 吞成 `***@1.0.0\index.js`
+  const pathish = "at C:\\repo\\node_modules\\foo@1.0.0\\index.js";
+  assert.equal(redactProxy(pathish), pathish, "诊断里的路径不该被搅");
+});

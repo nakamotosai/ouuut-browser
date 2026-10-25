@@ -79,9 +79,12 @@ export function redactProxy(text) {
   return (
     text
       .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]*@/gi, "$1***@")
-      // 兜底:**Chrome 的 `--proxy-server` 也收没有 scheme 的 `user:pass@host:port`**
-      // (实测这种形状的代理确实会生效),而它同样会出现在诊断的启动参数与 stderr 里。
-      .replace(/(^|[\s=])([^\s/@:=]+:[^\s/@]*@)/g, "$1***@")
+      // 兜底:没有 scheme 的 `user:pass@host:port` 同样会出现在诊断的启动参数与 stderr 里。
+      // ⚠️ 别把它读成"这种代理能用":Chromium 156 实测**不收**带凭据的代理串(`ERR_NO_SUPPORTED_PROXIES`,
+      //    有没有 scheme 都一样);但它照样被我们原样拼进 `--proxy-server=…` 并打进诊断,所以照样要抹。
+      // ⚠️ 冒号后**不允许出现反斜杠** —— 否则 Windows 路径(`C:\repo\node_modules\foo@1.0.0\index.js`)
+      //    会被整段吞掉(2026-10-25 核验抓到的误伤)。
+      .replace(/(^|[\s=])([^\s/@:=\\]+:[^\s/@\\]*@)/g, "$1***@")
   );
 }
 

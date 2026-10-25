@@ -143,7 +143,8 @@ function appendLines(into, lines) {
  * 预算(`maxResultLength`)是**整张快照**的,不是每帧一份 —— 否则 N 个 iframe
  * 就能把输出撑成 N 倍。
  *
- * @returns {{content: string, refs: object, frames: Array<{frameId, url, refCount}>}}
+ * @returns {{content: string, refs: Array<object>, frames: Array<{frameId, url, refCount}>}}
+ *   `refs` 是**数组**(每条 §4.2 形状、含 refId)—— harness 按可迭代消费它,给映射会抛 TypeError。
  */
 export async function buildMultiFrameSnapshot({
   cdp,
@@ -160,7 +161,7 @@ export async function buildMultiFrameSnapshot({
   if (maxLength <= 8) {
     return {
       content: (header ? `${header}\n` : "").slice(0, maxLength),
-      refs: {},
+      refs: [],
       frames: [],
     };
   }
@@ -212,9 +213,10 @@ export async function buildMultiFrameSnapshot({
   // 只保留快照里真出现的 ref(内容里没有的节点给了 ref 也点不到)
   const keptRefs = new Set(sel.keptLines.map((l) => l.refId).filter((r) => r !== null));
   const all = allocator.snapshot();
-  const refs = {};
+  // **数组**(每条已是 §4.2 形状、含 refId):harness 的 `compactSnapshotResult` 按可迭代消费它。
+  const refs = [];
   for (const [k, v] of Object.entries(all)) {
-    if (keptRefs.has(Number(k))) refs[k] = v;
+    if (keptRefs.has(Number(k))) refs.push(v);
   }
 
   return { content, refs, frames };
