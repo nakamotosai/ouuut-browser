@@ -7,7 +7,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseProxy, redactProxy, describeArgs, PROXY_BYPASS_LIST, ProxyError } from "./proxy.mjs";
+import {
+  parseProxy,
+  redactProxy,
+  redactProxyValue,
+  describeArgs,
+  proxyRawValues,
+  scrubKnownProxies,
+  PROXY_BYPASS_LIST,
+  ProxyError,
+} from "./proxy.mjs";
 
 const SECRET = "s3cr3t-pass";
 
@@ -77,6 +86,48 @@ test("describeArgs:启动参数快照必须脱敏(诊断/报错都走它)", () =
   const line = describeArgs(argv);
   assert.ok(!line.includes(SECRET), line);
   assert.ok(line.includes("--headless=new"), "其余参数要留着(诊断才有用)");
+});
+
+test("★ describeArgs:`--proxy-server=` 走**结构化**脱敏(正则猜不动的形状也要抹净)", () => {
+  // 2026-10-25 fuzz 核验:`redactProxy` 那条自由文本启发式对"口令含空格 / 口令含 `/` / 用户名含 `@`"
+  // **整条不抹**(它面对任意文本,没法知道边界在哪)。而 `--proxy-server=<值>` 是我们自己拼的、
+  // **已知就是一条代理串** —— 这种形状不该靠猜,交给 `parseProxy` 按 WHATWG 算。
+  const cases = [
+    ["socks5://u:p w@h:1", "socks5://***@h:1"],
+    ["socks5://u:p/w@h:1", "socks5://***@h:1"],
+    ["socks5://user@corp.example:9Z@127.0.0.1:30613", "socks5://***@127.0.0.1:30613"],
+    ["u:\\Qzmkqv@h:1080", "***@h:1080"], // scheme 非法 -> 强制脱敏(前缀不是 scheme 就是凭据)
+    ["socks5://u:p@ss@h:1", "socks5://***@h:1"],
+  ];
+  for (const [value, want] of cases) {
+    const line = describeArgs([`--proxy-server=${value}`, "--headless=new"]);
+    assert.equal(line, `--proxy-server=${want} --headless=new`, `没抹准:${value}`);
+  }
+  // 没凭据的别画蛇添足
+  assert.equal(
+    describeArgs(["--proxy-server=socks5://proxy.example:1080"]),
+    "--proxy-server=socks5://proxy.example:1080",
+  );
+});
+
+test("★ parseProxy 的报错文本也不许漏凭据", () => {
+  // 解析失败时我们只能"整段前缀抹掉"——那时已知输入是代理串,不存在需要保护的路径语义。
+  const cases = [
+    ["u:\\Qzmkqv@h:1080", "Qzmkqv"], // scheme 非法
+    ["socks5://u:p/w@h:1", "p/w"], // 带路径
+    ["http://user:Qzpass@h", "Qzpass"], // 缺端口
+    ["ftp://u:Qzpass@h:1", "Qzpass"], // scheme 不许
+  ];
+  for (const [bad, secret] of cases) {
+    let msg = null;
+    try {
+      parseProxy(bad);
+    } catch (e) {
+      msg = e.message;
+    }
+    assert.ok(msg !== null, `这条本来该抛错:${bad}`);
+    assert.ok(!msg.includes(secret), `报错文本漏了凭据片段 ${secret}:${msg}`);
+  }
 });
 
 test("绕过列表只有一份(浏览器级与 context 级共用,防漂)", () => {
@@ -152,4 +203,26 @@ test("★ redactProxy:用户名带反斜杠的域账号凭据**也必须**抹(�
     "socks5://***@h:1080",
     "带 scheme 的那条规则(口令段不禁反斜杠)也要照样抹",
   );
+});
+
+test("★ scrubKnownProxies:字面替换 —— 启发式猜不动的形状也认得出来", () => {
+  // 分工:调用方手里有**原文**时必须先做字面替换(见 cdp-pipe 的 diagnoseExit),
+  // 因为自由文本启发式对"口令含空格/含 `/`"这种形状**整条不抹**(fuzz 核验)。
+  const raw = "socks5://u:p QzPw@h:1080";
+  const line = `[peer] argv: --proxy-server=${raw} --headless=new`;
+  assert.ok(redactProxy(line).includes("QzPw"), "前提:启发式确实猜不动这条(否则这条用例没在守东西)");
+  const out = redactProxy(scrubKnownProxies(line, [raw]));
+  assert.ok(!out.includes("QzPw"), `字面替换后还残留口令:${out}`);
+  assert.ok(out.includes("socks5://***@h:1080"), out);
+  // 文本里没有原文时不许乱动
+  assert.equal(scrubKnownProxies("无关文本", [raw]), "无关文本");
+});
+
+test("proxyRawValues:只认 `--proxy-server=<值>`,空值不收", () => {
+  assert.deepEqual(
+    proxyRawValues(["--headless=new", "--proxy-server=socks5://u:p@h:1", "--proxy-bypass-list=<-loopback>"]),
+    ["socks5://u:p@h:1"],
+  );
+  assert.deepEqual(proxyRawValues(["--proxy-server=", "--proxy-server"]), []);
+  assert.deepEqual(proxyRawValues([]), []);
 });

@@ -22,7 +22,7 @@ import { randomBytes } from "node:crypto";
 import net from "node:net";
 
 // 诊断里的启动参数要脱敏(代理凭据不落日志,见 proxy.mjs)
-import { describeArgs, redactProxy } from "./proxy.mjs";
+import { describeArgs, redactProxy, proxyRawValues, scrubKnownProxies } from "./proxy.mjs";
 
 const NUL = 0x00;
 
@@ -290,7 +290,10 @@ export function spawnCdpPipe({
     const ms = Date.now() - startedAt;
     // ⚠️ **stderr 也要脱敏**:对端可能把自己的启动参数(含 `--proxy-server=socks5://u:p@h`)打进 stderr,
     // 而那一段会被原样拼进诊断 —— 2026-10-25 写这条用例时真抓到的第二条泄漏路径。
-    const err = redactProxy(stderrText());
+    // 先**字面替换**我们已知的代理原文(形状再怪都认得),再走启发式兜底其余文本 ——
+    // 启发式对"口令含空格 / 含 `/`"这类形状猜不动(2026-10-25 fuzz 核验),所以顺序不能反。
+    const raws = proxyRawValues(spawnArgs);
+    const err = redactProxy(scrubKnownProxies(stderrText(), raws));
     const parts = [`${name} 退出(code=${exitInfo.code} signal=${exitInfo.signal},存活 ${ms} ms)`];
     if (ms < 2000 && err.trim() === "") {
       parts.push(

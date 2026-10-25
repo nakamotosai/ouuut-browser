@@ -294,3 +294,28 @@ test("★ 诊断打印启动参数时要抹掉代理凭据", async (t) => {
   assert.ok(!d.includes("user:"), "用户名也属凭据");
   assert.ok(d.includes("***@"), "应当留下 ***@ 的痕迹(说明这里本来是带凭据的)");
 });
+
+test("★ stderr 回显我们自己的参数时,凭据也要抹(含空格的口令:启发式猜不动,靠字面替换)", async (t) => {
+  // 2026-10-25 fuzz 核验:`redactProxy()` 是**自由文本**启发式,对"口令含空格 / 含 `/` / 用户名含 `@`"
+  // 这类形状**整条不抹**——它没法知道那个空格是口令的一部分还是参数分隔。
+  // 但 diagnoseExit 手里**有**代理原文(spawnArgs),所以先做**字面替换**:形状再怪也认得出来。
+  // 对端把 argv 打进 stderr 是真实发生的(坑-40 里那条泄漏就是),这里就让假对端真的这么干。
+  const SENTINEL = "QzSpacePw";
+  const cdp = spawnCdpPipe({
+    exe: process.execPath,
+    args: [
+      "-e",
+      "process.stderr.write(process.argv.join(' ')); process.exit(0)",
+      `--proxy-server=socks5://u:p ${SENTINEL}@h:1080`,
+    ],
+    name: "回显参数的对端",
+    useNamedPipes: false,
+    timeoutMs: 2_000,
+  });
+  t.after(() => cdp.close().catch(() => {}));
+  await new Promise((r) => setTimeout(r, 600));
+
+  const d = cdp.diagnoseExit();
+  assert.ok(!d.includes(SENTINEL), `stderr 回显里的口令漏进诊断了:\n${d}`);
+  assert.ok(d.includes("***@"), `应当留下 ***@ 的痕迹:\n${d}`);
+});

@@ -40,17 +40,17 @@ export function parseProxy(url) {
   try {
     u = new URL(url);
   } catch {
-    throw new ProxyError(`代理串解析失败:${JSON.stringify(redactProxy(url))}`);
+    throw new ProxyError(`代理串解析失败:${JSON.stringify(forceRedactProxyValue(url))}`);
   }
   const scheme = u.protocol.replace(/:$/, "").toLowerCase();
   if (!SCHEMES.includes(scheme)) {
     throw new ProxyError(`代理 scheme 只允许 ${SCHEMES.join(" / ")},收到 ${JSON.stringify(scheme)}`);
   }
   if (!u.hostname || !u.port) {
-    throw new ProxyError(`代理必须带 host 与 port:${JSON.stringify(redactProxy(url))}`);
+    throw new ProxyError(`代理必须带 host 与 port:${JSON.stringify(forceRedactProxyValue(url))}`);
   }
   if (u.pathname !== "/" && u.pathname !== "") {
-    throw new ProxyError(`代理不该带路径:${JSON.stringify(redactProxy(url))}`);
+    throw new ProxyError(`代理不该带路径:${JSON.stringify(forceRedactProxyValue(url))}`);
   }
   const hasCredentials = Boolean(u.username || u.password);
   return {
@@ -84,21 +84,104 @@ export function redactProxy(text) {
       //      `--proxy socks5://u:p@198.51.100.7:41105` => `net::ERR_NO_SUPPORTED_PROXIES`
       //      (浏览器级「无 --profile-kind」与 context 级「--profile-kind persona」两条路都一样);
       //      对照组 `--proxy socks5://198.51.100.7:41105` => 出口 129.225.148.47(可用)。
-      //    抹除的理由**不是**"这种代理能用",而是它会被原样拼进 `--proxy-server=...`(拼接口在
-      //    `native/bin/launch-args.mjs` 的按 kind 分流那几行)并进诊断/错误消息(坑-40 里那两条泄漏出口)。
+      //    抹除的理由**不是**"这种代理能用",而是它会被原样拼进 `--proxy-server=...`
+      //    (`native/bin/launch-args.mjs` 的按 kind 分流那几行)并进诊断/错误消息
+      //    (两条出口:本模块头注释与 `native/binding/cdp-pipe.mjs` 里 stderr / 启动参数那两处)。
+      //    ⚠️ 我们自己拼的那个 `--proxy-server=<值>` **不走这里**,走 `redactProxyValue()` 的结构化脱敏。
       // ⚠️ 两个字符类都是**踩出来的**,别顺手"收窄":
-      //    - 尾段允许 `@`(要吃到**最后**一个 `@`):口令含 `@` 是**我们认可的**形状 ——
+      //    - 尾段允许 `@`(要的是**最后**一个 `@`):口令含 `@` 是**我们认可的**形状 ——
       //      实测 `parseProxy("socks5://u:p@ss@h:1")` 返回 `hasCredentials:true`(WHATWG 以最后一个 `@` 为分隔),
       //      只抹到第一个 `@` 会把口令尾巴(`ss`)留在诊断里(2026-10-25 核验 P2);
       //    - 尾段允许 `\`:口令含反斜杠时若禁止,整条凭据**全漏**(同日核验 P3);
       //    - 路径误伤改由**盘符前瞻** `(?![A-Za-z]:[\\/])` 挡 —— 它**有用**,别删:
       //      `at C:\repo\node_modules\foo@1.0.0\index.js` 删掉前瞻就会被整段吞(有用例守着)。
-      //    - 代价(明知故犯):既含空格又带 `x:y@z` 的路径会被多抹(`at C:\a b:c@d\e`)—— 宁可多抹,不可漏抹。
+      // ⚠️ **已知边界**(2026-10-25 fuzz 核验,5200 条生成式里 29.6% 抹不净;全部是**既有**问题,非某次改动引入)。
+      //    这里只处理**自由文本**,所以刻意"宁可多抹,不可漏抹";能走结构化的一律别走这里:
+      //    1. 抹不净(⇒ 口令可能进日志):口令含**空格**或 `/`、用户名含 `@`、单字符用户名 + `\` 开头口令
+      //       (`u:\Qzmkqv@h:1080` 里 `u:\` 与盘符同形,被前瞻否掉)——这些交给 `redactProxyValue()`/`parseProxy().redacted`。
+      //    2. 多抹(只是显示难看):既含空格又带 `x:y@z` 的路径(`at C:\a b:c@d\e`)、
+      //       JSON 跨字段(`"data":"C:\a:b@c"`)、`\\?\C:\...` 扩展路径、`file:C:\a\b@2.json`
+      //       —— 前瞻只在本行**匹配起点**处生效,这些起点不在盘符上。
       .replace(/(^|[\s=])(?![A-Za-z]:[\\/])([^\s/@:=]+:[^\s/]*@)/g, "$1***@")
   );
 }
 
-/** 启动参数数组 → **可打印**的一行(代理凭据脱敏)。诊断/报错一律用这个。 */
+/**
+ * **强制**脱敏一条**已知是代理串**的值:把**最后一个 `@`** 之前的整段前缀换成 `***`。
+ *
+ * 与 `redactProxy` 的分工:那个面对的是**任意自由文本**(stderr、错误消息),只能靠正则猜,
+ * 因此对"口令含空格 / 口令含 `/` / 用户名含 `@`"这类形状**猜不动**(见其注释里的已知边界);
+ * 这里输入**已知就是一条代理串**,前缀只可能是 scheme 或凭据,不存在需要保护的路径语义,于是可以整段抹。
+ */
+function forceRedactProxyValue(value) {
+  const at = value.lastIndexOf("@");
+  if (at === -1) return value; // 没有凭据段,没什么可抹
+  const sep = value.indexOf("://");
+  const head = sep === -1 ? "" : value.slice(0, sep + 3);
+  return `${head}***${value.slice(at)}`;
+}
+
+/**
+ * 脱敏一条代理串的**值**(结构化优先)。
+ *
+ * 先让 `parseProxy` 按 WHATWG 解析、用它算出来的 `redacted` —— 这样
+ * `socks5://u:p w@h:1`(口令含空格)、`socks5://user@corp.example:9Z@h:1`(用户名含 `@`)、
+ * `socks5://u:p@ss@h:1`(口令含 `@`)这些**正则猜不动**的形状都能抹准;
+ * 解析不动的(如 `u:\Qzmkqv@h:1080` —— scheme 非法)退回 `forceRedactProxyValue`。
+ *
+ * ⚠️ 别拿它去处理**自由文本**:它假设整串就是一条代理串,会把串里的路径语义一起抹掉。
+ */
+export function redactProxyValue(value) {
+  if (typeof value !== "string" || value === "") return value;
+  try {
+    const parsed = parseProxy(value);
+    if (parsed) return parsed.redacted;
+  } catch {
+    /* 解析不动 —— 落到强制脱敏 */
+  }
+  return forceRedactProxyValue(value);
+}
+
+/**
+ * 从启动参数里捞出**可能带凭据的原始代理串**(给"字面替换"用)。
+ *
+ * 为什么需要它:`redactProxy()` 面对任意自由文本只能猜形状,而**对端很可能把我们自己的参数原文
+ * 打进 stderr**(2026-10-25 抓到过)。调用方(如 `cdp-pipe.mjs` 的 `diagnoseExit`)手里**有**这些原文,
+ * 于是可以先做**字面替换** —— 形状再怪(口令含空格/`/`/`@`)也认得出来,不靠猜。
+ */
+export function proxyRawValues(argv = []) {
+  const out = [];
+  for (const a of argv) {
+    const m = /^--proxy-server=(.*)$/s.exec(String(a));
+    if (m && m[1] !== "") out.push(m[1]);
+  }
+  return out;
+}
+
+/** 把文本里**已知的原始代理串**整条换成脱敏形式(字面匹配,不做任何形状猜测)。 */
+export function scrubKnownProxies(text, raws = []) {
+  let out = String(text);
+  for (const raw of raws) {
+    if (typeof raw === "string" && raw !== "" && out.includes(raw)) {
+      out = out.split(raw).join(redactProxyValue(raw));
+    }
+  }
+  return out;
+}
+
+/**
+ * 启动参数数组 → **可打印**的一行(代理凭据脱敏)。诊断/报错一律用这个。
+ *
+ * `--proxy-server=<值>` 走**结构化**脱敏(`redactProxyValue`):这个值是我们自己拼的、已知是代理串,
+ * 不该依赖正则去猜(2026-10-25 fuzz 核验:自由文本那条启发式对"口令含空格/含 `/`"整条不抹)。
+ * 其余参数走自由文本脱敏(它们可能是任何东西,包括日志行里的路径)。
+ */
 export function describeArgs(argv = []) {
-  return argv.map((a) => redactProxy(String(a))).join(" ");
+  return argv
+    .map((a) => {
+      const s = String(a);
+      const m = /^--proxy-server=(.*)$/s.exec(s);
+      return m ? `--proxy-server=${redactProxyValue(m[1])}` : redactProxy(s);
+    })
+    .join(" ");
 }
