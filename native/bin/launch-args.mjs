@@ -54,6 +54,7 @@ export const USAGE = `ouuut —— 自带 Chromium 的 agent 浏览器
   --identity-country <cc> 画像的国家(如 jp / us)。给了它,启动时会**核对出口**(F6/P4)
   --egress-country <cc>   你**声明**的出口国家;与实测不符同样拒绝(声明不能与事实脱钩)
   --allow-egress-mismatch 明知不一致也放行(诊断里会标出来)
+  --allow-phone-home       放开浏览器自己的回连域名(默认挡住:见坑-46)
   --profiles <json>       额外档案(双档案双出口),如
                           '[{"id":"a","kind":"persona","proxy":"socks5://h:1080"},{"id":"b","kind":"disposable"}]'
                           脚本里 taskSpace("x","a") 之后的页面就走 a 的档案与出口
@@ -229,6 +230,10 @@ export function parseArgs(argv = []) {
       case "--allow-egress-mismatch":
         out.allowEgressMismatch = true;
         break;
+      case "--allow-phone-home":
+        // 默认把浏览器自己的回连挡在解析层;确实要访问那几个域名的人才给这个开关
+        out.allowPhoneHome = true;
+        break;
       case "--profiles": {
         // 双档案双出口:一个会话里开多个档案,各自绑自己的出口。
         // 用 **JSON** 而不是自定义分隔符:代理串里全是 `:` 和 `/`,自定义语法一定会歧义。
@@ -369,6 +374,20 @@ export function buildBrowserArgs(opts = {}, env = {}) {
     "--no-default-browser-check",
     "--disable-sync",
     "--disable-background-networking",
+    // ---- 把浏览器自己的回连挡在**解析层**(默认开;`--allow-phone-home` 关掉)----
+    // 依据(P9):记录式出口(`probe/tools/zero_telemetry_via_ouuut.mjs`,全部拒绝转发)实测 ——
+    // 光有上面那些开关时,启动仍会去连 update.googleapis.com(组件更新)、clients2.google.com(变体种子)、
+    // accounts.google.com / www.google.com(登录与首页服务);逐项试过 5 个开关,**一台主机都没少**。
+    // 解析层是唯一干净、且不需要管理员权限的杠杆:映射成 NOTFOUND ⇒ 连 DNS 都不查,更谈不上出网
+    // (实测:`probe/tools/phone_home_blocked_via_ouuut.mjs`,四个域名全部 ERR_NAME_NOT_RESOLVED)。
+    // ⚠️ 只对**浏览器侧解析**有效:走 `socks5://` / `socks5h://` 时代理自己解域名(Chrome 的 socks5 就是远端解析),
+    //     那时拦截点应该在**代理侧的拒绝清单**(见坑-46)。
+    // ⚠️ 代价:显式导航到这四个域名也会失败(它们是"回连",不是产品要访问的目标);确实需要就走 `--allow-phone-home`。
+    ...(opts.allowPhoneHome
+      ? []
+      : [
+          "--host-resolver-rules=MAP update.googleapis.com ~NOTFOUND, MAP clients2.google.com ~NOTFOUND, MAP accounts.google.com ~NOTFOUND, MAP www.google.com ~NOTFOUND",
+        ]),
   ];
 
   if (opts.headless) args.push("--headless=new");
