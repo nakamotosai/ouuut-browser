@@ -123,3 +123,34 @@ test("USAGE 提到三种档案与无头", () => {
   assert.match(USAGE, /--headless/);
   for (const k of KINDS) assert.ok(USAGE.includes(k), `帮助里要提到 ${k}`);
 });
+
+// ---- 5. 提权会话:两个开关必须**永远**在 --------------------------------------
+//
+// 2026-10-25 实测:在管理员会话里起浏览器,进程**退 0、零输出、连日志都不生成**。
+// 原因不是"开关不被支持",而是 exe 检测到自己被提权 → 把自己**重新降权拉起**
+// → 原进程退 0;降权失败时浏览器就再也不出现。`--do-not-de-elevate` 掐掉这次重启。
+// 提权下沙箱还会 `拒绝访问 0x5`,所以 `--no-sandbox` 也必须给。
+//
+// 这两个**不是**指纹开关(页面看不到),所以无条件带上,不做"是否提权"的判断 ——
+// Windows 上没有可靠的纯 JS 提权检测,判断错了反而更糟。
+
+test("★ 提权会话的两个必需开关必须无条件出现", () => {
+  const { args } = buildBrowserArgs({}, {});
+  assert.ok(args.includes("--do-not-de-elevate"), "缺了它,提权下浏览器会退 0 且零输出");
+  assert.ok(args.includes("--no-sandbox"), "缺了它,提权下沙箱访问不到 exe(0x5)");
+});
+
+test("★ 这两个开关在有头与无头下都要在(不是只在某一种模式里)", () => {
+  for (const argv of [[], ["--headless"]]) {
+    const { args } = buildBrowserArgs(parseArgs(argv), {});
+    assert.ok(args.includes("--do-not-de-elevate"), `argv=${JSON.stringify(argv)} 缺 --do-not-de-elevate`);
+    assert.ok(args.includes("--no-sandbox"), `argv=${JSON.stringify(argv)} 缺 --no-sandbox`);
+  }
+});
+
+test("它们不该被误列进禁止项", () => {
+  for (const bad of FORBIDDEN_ARGS) {
+    assert.notEqual(bad, "--do-not-de-elevate");
+    assert.notEqual(bad, "--no-sandbox");
+  }
+});

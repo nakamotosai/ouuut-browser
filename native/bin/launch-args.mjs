@@ -217,6 +217,18 @@ export function buildBrowserArgs(opts = {}, env = {}) {
     // ---- 通道:不监听任何 TCP 端口 ----
     "--remote-debugging-pipe",
 
+    // ---- 提权会话下的两个必需开关(2026-10-25 实测)----
+    //
+    // 症状:在管理员会话里起浏览器 → 进程 **退 0、零输出、连日志文件都不生成**。
+    // 原因:chrome.exe 检测到自己被提权,会把自己**重新降权拉起**然后原进程退 0;
+    // 若降权失败(无交互桌面/服务会话),浏览器就再也不出现。
+    //   `--do-not-de-elevate` 直接掐掉这次重启。
+    //
+    // 第二个:提权下沙箱访问不到 exe(`Sandbox cannot access executable ... 拒绝访问 0x5`),
+    // 所以还要 `--no-sandbox`。两者都不是指纹开关,不影响页面可观测面。
+    "--do-not-de-elevate",
+    "--no-sandbox",
+
     // ---- 那六项里的"要加的" ----
     `--disable-features=${DEFAULT_FEATURES_TO_DISABLE.join(",")}`,
     // ---- 视口 / 窗口位置 ----
