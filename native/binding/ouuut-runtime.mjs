@@ -44,6 +44,7 @@ import {
 } from "./task-spaces.mjs";
 import { buildHeader, buildSnapshot } from "./snapshot.mjs";
 import { buildMultiFrameSnapshot } from "./oopif.mjs";
+import { auditWebrtc } from "./webrtc-audit.mjs";
 
 /** 与上游一致的默认响应超时(见 browser-runtime.ts 的 RESPONSE_TIMEOUT_MS 量级)。 */
 const VERSION_TIMEOUT_MS = 10_000;
@@ -83,6 +84,17 @@ export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profile
     onCDPMessage: undefined,
     onSendCDPMessageError: undefined,
   };
+
+  /**
+   * WebRTC 候选泄漏自检(ADR-014)。
+   *
+   * 为什么放在 API 上:ADR-014 要求「抑制**真的生效**」,而不只是启动参数里有一行。
+   * 有了它,harness 脚本可以 `await ouuut.auditWebrtc()` 拿一个可断言的结论。
+   *
+   * ⚠️ 它会发 `Runtime.evaluate` —— 这是一次**自检**,不是正常驱动路径;
+   * 正常路径仍然按住 `Runtime.enable`(ADR-005)。
+   */
+  runtime.auditWebrtc = (opts = {}) => auditWebrtc({ cdp, ...opts });
 
   // ---- 入站:每一条 CDP 消息都原样交给 harness --------------------------------
   const offRaw = cdp.onRaw((msg) => {

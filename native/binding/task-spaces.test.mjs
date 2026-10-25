@@ -266,3 +266,29 @@ test("★ snapshot({includeFrames:false}) 显式关掉多帧 → 只剩主 frame
   assert.ok(!snap.content.includes("跨进程按钮"), "关掉之后不该出现 OOPIF 内容");
   assert.match(snap.content, /该域名仅用于文档示例/, "主 frame 内容照旧");
 });
+
+
+// ---- WebRTC 抑制自检(ADR-014)---------------------------------------------
+
+test("★ ouuut.auditWebrtc():复刻 ADR-014 的泄漏场景 → 判不通过并点名公网地址", async (t) => {
+  const env = boot(5_000, { FAKE_PEER_WEBRTC: "leak" });
+  t.after(() => env.dispose());
+
+  const v = await env.api.auditWebrtc({ gatherMs: 50 });
+  assert.equal(v.ok, false, "有公网候选就必须判失败");
+  assert.equal(v.leaks.length, 2, "一个公网 IPv6 + 一个公网 IPv4");
+  assert.ok(
+    v.leaks.some((l) => l.address === "124.211.130.95"),
+    "要点名真实出口 IP",
+  );
+  assert.equal(v.counts.mdns, 1, "mDNS 那条要单列,不许混进泄漏");
+});
+
+test("★ ouuut.auditWebrtc():0 个候选 → 通过(这才是抑制生效的样子)", async (t) => {
+  const env = boot(5_000, { FAKE_PEER_WEBRTC: "clean" });
+  t.after(() => env.dispose());
+
+  const v = await env.api.auditWebrtc({ gatherMs: 50 });
+  assert.equal(v.ok, true);
+  assert.equal(v.counts.total, 0);
+});

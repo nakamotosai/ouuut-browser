@@ -17,6 +17,8 @@ const NUL = 0x00;
 /** 置 1 时本替身会演一个**跨进程 iframe**:`Target.getTargets` 多给一个 iframe target,
  *  并且**按 sessionId** 返回不同的 AX 树 —— 用来验证 OOPIF 真取树那条路。 */
 const WITH_OOPIF = process.env.FAKE_PEER_OOPIF === "1";
+/** `leak` = 复刻 ADR-014 那组泄漏;`clean` = 0 个候选(CloakBrowser 那种)。 */
+const WEBRTC_MODE = process.env.FAKE_PEER_WEBRTC ?? "";
 const OUT = 4; // 子进程往 fd 4 写 = 父进程读
 const IN = 3; // 父进程往 fd 3 写 = 子进程读
 
@@ -120,6 +122,29 @@ const handlers = {
         { nodeId: "5", role: { value: "StaticText" }, name: { value: "This domain is for use in documentation examples." } },
       ],
     });
+  },
+  // WebRTC 自检探针的替身(ADR-014)
+  "Runtime.evaluate": (id) => {
+    if (WEBRTC_MODE === "leak") {
+      reply(id, {
+        result: {
+          value: {
+            error: null,
+            candidates: [
+              "candidate:1 1 udp 2122260223 7d3f-9a2b.local 54321 typ host generation 0",
+              "candidate:2 1 udp 2122260223 240f:77:160:1:abcd:ef01:2345:6789 54322 typ host generation 0",
+              "candidate:3 1 udp 1677729535 124.211.130.95 54323 typ srflx generation 0",
+            ],
+          },
+        },
+      });
+      return;
+    }
+    if (WEBRTC_MODE === "clean") {
+      reply(id, { result: { value: { error: null, candidates: [] } } });
+      return;
+    }
+    reply(id, { result: { value: null } });
   },
   "Browser.getVersion": (id) =>
     reply(id, {
