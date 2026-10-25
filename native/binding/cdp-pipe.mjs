@@ -160,6 +160,28 @@ export function spawnCdpPipe({
     pending.clear();
   };
 
+  /**
+   * 传输层流的 `error` —— **两端都必须挂**,而且**只记不拒**。
+   *
+   * 为什么只记不拒:对端一死,pipe / socketpair 的对端会先抛 `ECONNRESET`
+   * (2026-10-25 Linux 实测:`stdio[3] error: ECONNRESET read`),而这时 stderr
+   * 往往还没派发完。若在这里抢先 `failAll`,调用方拿到的就是一句**裸
+   * `read ECONNRESET`** —— 退出码、stderr、启动参数这些诊断全丢(坑-29 花了
+   * 两小时才算出来的东西,不能就这么扔回给调用方)。
+   *
+   * 拒付交给 exit/close 那条路径(`failWithExit`),它才握有完整信息;
+   * 记下来的行会被 `diagnoseExit()` 带出去,所以不会白记。
+   */
+  const transportErrors = [];
+  function noteTransportError(prefix) {
+    return (e) => {
+      const line = `${prefix}出错:${e.code ?? e.message}`;
+      if (!transportErrors.includes(line)) transportErrors.push(line);
+      // 已经知道对端退了 ⇒ 不用再等那 2 秒兜底,当场把诊断交出去
+      if (exitInfo && !closed) failWithExit();
+    };
+  }
+
   const splitter = createMessageSplitter((text) => {
     let msg;
     try {
@@ -215,9 +237,7 @@ export function spawnCdpPipe({
         failAll(new CdpPipeError(`${name} 在写完一条消息前就关闭了输出:${rest.slice(0, 200)}`));
       }
     });
-    stream.on("error", (e) => {
-      failAll(new CdpPipeError(`${name} 的读管道出错:${e.message}`, { cause: e }));
-    });
+    stream.on("error", noteTransportError(`${name} 的读管道`));
   }
 
   // 命名管道模式下两个连接是**异步**到达的,所以写入要先排队、连上再按序放出去。
@@ -243,6 +263,11 @@ export function spawnCdpPipe({
     servers[1].once("connection", (sock) => attachFromChild(sock));
   } else {
     attachFromChild(fromChild);
+    // 写端(stdio[3],socketpair 的一端)**也必须挂 `error`**:对端一死它会抛
+    // `ECONNRESET`,没有处理就是**未捕获异常** —— 整个进程被掀翻,而且报错会归到
+    // 当时恰好在跑的那个用例上。2026-10-25 Linux 实测:那两条红都是这么来的
+    // (`cdp-pipe.test.mjs:186` 与 `task-spaces.test.mjs:167` 报的是**同一个**根因)。
+    toChild.on("error", noteTransportError(`${name} 的写管道`));
   }
 
   /**
@@ -273,6 +298,7 @@ export function spawnCdpPipe({
     } else {
       parts.push("运行期退出(不是启动失败)");
     }
+    if (transportErrors.length > 0) parts.push(`传输层:${transportErrors.join(" / ")}`);
     parts.push(`启动参数:${spawnArgs.join(" ")}`);
     return parts.join("\n");
   }
@@ -301,6 +327,11 @@ export function spawnCdpPipe({
 
   child.on("exit", (code, signal) => {
     exitInfo = { code, signal };
+    // 传输层已经报过错 ⇒ 两端都断了,再等那 2 秒兜底只是白等(还会让调用方多等一轮)
+    if (transportErrors.length > 0) {
+      failWithExit();
+      return;
+    }
     exitTimer = setTimeout(failWithExit, 2000);
     exitTimer.unref?.();
   });
