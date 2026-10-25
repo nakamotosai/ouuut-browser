@@ -252,3 +252,38 @@ test("★ describeArgs:解析成功时 query/fragment 会被丢掉(那里可能�
   );
   assert.equal(describeArgs(["--proxy-server=socks5://h:1080#token=SENTINEL"]), "--proxy-server=socks5://h:1080");
 });
+
+test("★ 解析失败/畸形代理串:口令与 query 一个字都不许留(2026-10-25 核验 P1,真机复现过)", () => {
+  // 真机复现过的两条(口令逐字进了 stderr):
+  //   `--proxy 'socks5://u:zqPWE://h:1'`    -> 曾经回显原文
+  //   `--proxy 'socks5://h?password=X'`     -> 曾经回显原文
+  // 根因:forceRedact 只在"有 `@`"时才动手,而**没有 `@` 的畸形串照样带密码**。
+  const SECRETS = ["zqPWE", "zqSent2", "zqQ1"];
+  const shapes = [
+    "socks5://u:zqPWE://h:1",
+    "socks5://u:zqPWE://h:1/",
+    "socks5://h?password=zqSent2",
+    "socks5://h#token=zqSent2",
+    "socks5://u:p@h:1/p?password=zqQ1",
+    "u:pw://h:1@b",
+    "user:pw://x@https://proxy:8080",
+  ];
+  for (const v of shapes) {
+    const out = redactProxyValue(v);
+    for (const sec of SECRETS) assert.ok(!out.includes(sec), `漏了 ${sec}:${JSON.stringify(v)} -> ${JSON.stringify(out)}`);
+    // 报错文本那条路也过一遍(它用的也是这个函数)
+    let msg = "";
+    try {
+      parseProxy(v);
+    } catch (e) {
+      msg = e.message;
+    }
+    if (msg) for (const sec of SECRETS) assert.ok(!msg.includes(sec), `报错文本漏了 ${sec}:${msg}`);
+  }
+  // 抹到什么程度:`@` 之前的凭据段与 `@` 之后的 query 一起糊掉
+  assert.equal(redactProxyValue("socks5://u:p@h:1/p?password=X"), "socks5://***@***");
+  assert.equal(redactProxyValue("u:pw://h:1@b"), "***@b");
+  // 没有"像凭据"记号的串别乱动(读起来还有用)
+  assert.equal(redactProxyValue(""), "");
+  assert.equal(redactProxyValue("just text"), "just text");
+});

@@ -119,14 +119,20 @@ export function redactProxy(text) {
  */
 function forceRedactProxyValue(value) {
   const at = value.lastIndexOf("@");
-  if (at === -1) return value; // 没有凭据段,没什么可抹
-  // `scheme://` 前缀只在**它自己不含 `@` 且确实在最后一个 `@` 之前**时才保留 ——
-  // 否则会出现"看着像抹了、其实前段原样留着"的输出:`user:pw@https://proxy:8080` 曾经被抹成
-  // `user:pw@https://***@https://proxy:8080`(口令留着,还带着 `***@` 的假象)。
-  // 2026-10-25 核验抓到这一条。
+  // 没有 `@` 不代表没有秘密:`socks5://u:pw`(缺 host)与 `socks5://h?password=X` 都是**解析失败**的串,
+  // 而它们照样会把口令/query 交给我们打印。只要串里有 `:` `/` 之外的任何"像凭据"的记号,就**整段抹**。
+  // ⚠️ 代价(明知):`socks5://h:1080/x`(带路径)这类**非法但我们看得懂**的串也会变成 `***`,
+  //    诊断里少一句"你打的是什么"。但这条路的职责是"报错 + 绝不漏",不是回显用户输入;宁可难看。
+  if (at === -1) return /[:@?#]/.test(value) ? "***" : value;
+  // `scheme://` 前缀只在三件事同时成立时才保留:它**确实长得像 scheme**(不含 `/` `:` `@` 等)、
+  // 位置在第一个 `://` 之前、且整段落在最后一个 `@` 之前。
+  // 否则会出现"看着抹了、其实前段原样留着":`user:pw@https://proxy:8080`、`u:pw://h:1@b`(2026-10-25 两轮核验各抓到一条)。
   const sep = value.indexOf("://");
   const head =
-    sep !== -1 && sep + 3 <= at && !value.slice(0, sep + 3).includes("@") ? value.slice(0, sep + 3) : "";
+    sep > 0 && /^[a-z][a-z0-9+.-]*$/i.test(value.slice(0, sep)) && sep + 3 <= at ? value.slice(0, sep + 3) : "";
+  // `@` **之后**的尾巴同样不可信:那是 host 与 query/fragment 的位置,`?password=` / `#token=` 都在这儿。
+  // 只要出现 `?`/`#`,连同尾巴一起抹 —— 否则 `socks5://u:p@h:1/p?password=X` 会漏掉 query 里的口令。
+  if (/[?#]/.test(value.slice(at))) return `${head}***@***`;
   return `${head}***${value.slice(at)}`;
 }
 
