@@ -186,7 +186,7 @@ export async function cli({
   // 免得因为脚本为空白起一次浏览器(而硬杀的浏览器会锁住 chrome.dll,见坑-23)。
   //
   // `--script <path>` 时改从**文件**读,并且**完全不碰 stdin** ——
-  // 程序化调用方(如 `probe/targets/ouuut.py`)要拿 stdin 跑自己的行协议。
+  // 程序化调用方要自己支配 stdin(`probe/targets/ouuut.py` 给的是 DEVNULL + 文件型协议),
   let stdinText = null;
   if (typeof runScript !== "function") {
     if (opts.script) {

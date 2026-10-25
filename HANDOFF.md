@@ -11,7 +11,7 @@
 
 装好的 0.1.3 能验签安装、能起浏览器(CDP 走命名管道,不开端口)、能建标签页、
 能出带真文本的快照。全量回归 **全绿(Windows 0 跳过;Linux 红恒为 0)**,公开化闸 **0 违规**
-(受控文件数会随文件增减变,当前 311 —— **以 `node tools/check-public-ready.mjs` 的输出为准,不在这里写死**)。
+(受控文件数随文件增减而变 —— **以 `node tools/check-public-ready.mjs` 的输出为准,本文件不抄这个数**)。
 
 ```
 version  = Chrome/156.0.8078.47
@@ -25,7 +25,7 @@ snapshot = 454 字符 → heading "hello ouuut" / button "pay now"
 
 | 命令 | 真实返回 |
 |---|---|
-| `node --test native/binding/*.test.mjs native/bin/*.test.mjs` | `# tests 318 / # pass 318 / # fail 0`(该行为收口时读数;用例会增长,别把这个数当常量) |
+| `node --test native/binding/*.test.mjs native/bin/*.test.mjs` | `# tests 318 / # pass 318 / # fail 0`(**该行的收口时快照**;用例后来增长到 326 —— 别把这个数当常量,现测以命令本身为准) |
 | `node tools/check-public-ready.mjs` | `✅ 可以公开:检查了 N 个受版本控制的文件,没有 ADR-010 材料或密钥`(**那一轮的读数是 305**;这个数会随文件增减变,**以闸自己的输出为准**) |
 | 安装(`tools/install-release.mjs` —— **这是真名**;旧文写的 `native/bin/ouuut-install.mjs` 从来不存在) | `493` 个文件 → `F:\apps\ouuut-browser\0.1.3`(盘上 494 = 493 + 运行时 `debug.log`) |
 | 冒烟(`.logs\run-smoke.ps1 -Script .logs\smoke.js`) | `has hello = true` / `has pay now = true` / `EXITCODE=0` |

@@ -36,7 +36,8 @@ ego 是"一次一进程、靠持久化 TaskSpace 接回上次的页面";我们�
 
 `p.goto(url)` / `p.evaluate(表达式)`(**表达式语义**,要自己包 IIFE)/ `p.waitForTimeout(ms)` /
 `p.click(selector)` / `p.screenshot({path})`(path 必须绝对)。**没有** `waitForSelector` 这类东西。
-`console.log` 走 **stdout**(ego 是 stderr)—— 这是行协议能成立的前提。
+`console.log` 走 **stdout**(ego 是 stderr),但**长驻脚本里它被 harness 的 sink 缓冲到脚本结束才 flush**
+(见上 §为什么不走 stdin / stdout)—— 所以结果**不能**走它,要走结果文件。
 """
 
 from __future__ import annotations
@@ -291,7 +292,8 @@ def launch(spec: LaunchSpec) -> Iterator[OuUutFacade]:
             stderr=subprocess.STDOUT,
             # ⚠️ **POSIX 上必须新开一个会话**:否则子进程继承我们的进程组,
             # `_kill_tree()` 里那句 `killpg(getpgid(pid))` 会把**探针自己**一起 SIGKILL
-            # (核验指出,P1;`contextlib.suppress` 拦不住 SIGKILL)。Windows 不支持这个参数,故条件传。
+            # (核验指出,P1;`contextlib.suppress` 拦不住 SIGKILL)。Windows 上它会被**静默忽略**
+            # (CPython 的 Windows 分支收下就丢,文档标 POSIX only),故条件传只是为了写明意图。
             **({"start_new_session": True} if os.name != "nt" else {}),
         )
     facade = OuUutFacade(proc, cmdlog, reslog, logfile, Path(spec.out_dir), "ouuut", max(30, spec.timeout_ms // 1000))
