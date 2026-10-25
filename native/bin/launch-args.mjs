@@ -50,6 +50,9 @@ export const USAGE = `ouuut —— 自带 Chromium 的 agent 浏览器
   --window-position <x,y> 窗口位置(如 1920,0 —— 把浏览器放到副屏,不抢主屏)
   --window-size <w,h>     窗口尺寸(如 1380,960)
   --proxy <url>           代理(同时用 --proxy-bypass-list 放行 loopback/tailnet)
+  --identity-country <cc> 画像的国家(如 jp / us)。给了它,启动时会**核对出口**(F6/P4)
+  --egress-country <cc>   你**声明**的出口国家;与实测不符同样拒绝(声明不能与事实脱钩)
+  --allow-egress-mismatch 明知不一致也放行(诊断里会标出来)
   -h, --help              本帮助
 
 设计取舍(见 docs/补丁点位.md §三 与 ADR-005):
@@ -208,6 +211,19 @@ export function parseArgs(argv = []) {
         out.proxy = v;
         break;
       }
+      case "--identity-country": {
+        const v = next(); if (v === null) return out;
+        out.identityCountry = v;
+        break;
+      }
+      case "--egress-country": {
+        const v = next(); if (v === null) return out;
+        out.egressCountry = v;
+        break;
+      }
+      case "--allow-egress-mismatch":
+        out.allowEgressMismatch = true;
+        break;
       case "--profile-kind": {
         const v = next();
         if (v === null) return out;

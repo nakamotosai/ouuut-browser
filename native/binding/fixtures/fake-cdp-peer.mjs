@@ -163,7 +163,13 @@ const handlers = {
     });
   },
   // WebRTC 自检探针的替身(ADR-014)
-  "Runtime.evaluate": (id) => {
+  "Runtime.evaluate": (id, params) => {
+    // 量出口(F6/P4):探针读的是 `document.body.innerText`,回一个可配的 IP。
+    // 默认值是台账里那条真实出口的**同一段**(所以它的"国家"是确定的,不会因为换机器而变)。
+    if (typeof params?.expression === "string" && params.expression.includes("document.body")) {
+      reply(id, { result: { value: process.env.FAKE_PEER_EGRESS_IP ?? "129.225.148.47" } });
+      return;
+    }
     if (WEBRTC_MODE === "leak") {
       reply(id, {
         result: {

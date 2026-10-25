@@ -32,6 +32,7 @@ import { createTaskSpaceRegistry } from "../binding/task-spaces.mjs";
 import { openSessionProfiles } from "../binding/session-profiles.mjs";
 import { assertProxyUsable } from "../binding/proxy.mjs";
 import { resolveHarnessEntry } from "../binding/paths.mjs";
+import { checkEgress, measureEgressIp } from "../binding/egress.mjs";
 import { parseArgs, buildBrowserArgs, USAGE } from "./launch-args.mjs";
 
 /**
@@ -238,6 +239,38 @@ export async function cli({
     env,
     async run({ api, registry, options }) {
       if (typeof runScript === "function") return runScript({ api, registry, options });
+
+      // ---- 出口一致性闸(F6 / P4):**在脚本跑之前** ----
+      // 为什么在这里而不是起浏览器之前:量出口要过一个真实的网络出口(我们只有浏览器这条现成通道),
+      // 而"拒绝启动"的效果一样 —— 脚本一行都还没跑,目标站一次都没碰。
+      if (opts.identityCountry || opts.egressCountry) {
+        let measuredIp;
+        try {
+          measuredIp = await measureEgressIp(api);
+        } catch (err) {
+          // 量不到就**不许当成"验过了"**(否则这道闸会静默失效)——但也不拒:可能是网络/端点的问题,
+          // 那属于另一类故障,不该冒充身份不一致。
+          process.stderr.write(
+            `[ouuut] 出口核对未完成(${err?.error_code ?? "?"}):${err?.message ?? err}\n` +
+              "        这一趟**没验过出口**;要严格禁止这种情况,请修好出口端点后重试。\n",
+          );
+          return 2;
+        }
+        let verdict;
+        try {
+          verdict = checkEgress({
+            measuredIp,
+            identityCountry: opts.identityCountry,
+            declaredEgressCountry: opts.egressCountry,
+            allowMismatch: Boolean(opts.allowEgressMismatch),
+          });
+        } catch (err) {
+          process.stderr.write(`[ouuut] ${err?.message ?? err}\n`);
+          return 2;
+        }
+        for (const note of verdict.notes) process.stderr.write(`[ouuut] 出口核对:${note}\n`);
+      }
+
       // 交给 harness 的 runMain,并把脚本**显式**传进去
       const mod = await import(resolveHarnessEntry("run.js", { env }));
       // 交给 harness 的 runMain,并把脚本**显式**传进去。

@@ -232,3 +232,38 @@ test("★ createTab:会话档案有 browserContextId 时,建页必须带它(否�
   const created2 = sent.filter((c) => c.method === "Target.createTarget").at(-1);
   assert.ok(!("browserContextId" in created2.params), "real 会话不许带 browserContextId(带了会被拒)");
 });
+
+// ---- 量出口(F6 / P4)--------------------------------------------------------
+
+test("★ probeEgressIp:必须把自检页建在**会话档案的 context** 里,量完还得收掉", async () => {
+  const { createOuUutRuntime } = await import("./ouuut-runtime.mjs");
+  const { createArchive } = await import("./archive.mjs");
+  const sent = [];
+  const cdp = {
+    onRaw: () => () => {},
+    send: async (method, params) => {
+      sent.push({ method, params });
+      if (method === "Target.createTarget") return { targetId: "T-probe" };
+      if (method === "Target.attachToTarget") return { sessionId: "S-probe" };
+      if (method === "Runtime.evaluate") return { result: { value: "129.225.148.47" } };
+      return {};
+    },
+    sendRaw: () => {},
+  };
+  const archive = createArchive({
+    profiles: [
+      { id: "real", name: "真实档案", kind: "real" },
+      { id: "persona", name: "画像", kind: "persona", browserContextId: "CTX-P" },
+    ],
+  });
+  const rt = createOuUutRuntime({ cdp, archive, sessionProfileId: "persona" });
+  assert.equal(await rt.api.probeEgressIp({ timeout: 2_000 }), "129.225.148.47");
+
+  const created = sent.find((c) => c.method === "Target.createTarget");
+  assert.equal(created.params.browserContextId, "CTX-P", "量出口的页必须落在档案自己的 context(否则量的是别人的出口)");
+  assert.ok(sent.some((c) => c.method === "Target.closeTarget"), "自检页必须收掉,别留在用户眼前");
+  assert.ok(sent.some((c) => c.method === "Target.detachFromTarget"), "session 也要摘掉");
+
+  const ev = sent.find((c) => c.method === "Runtime.evaluate");
+  assert.equal(ev.params.returnByValue, true, "要的是值,不是远端对象");
+});

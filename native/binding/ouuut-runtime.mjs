@@ -274,6 +274,55 @@ export function createOuUutRuntime({
     return spaces.list(); // **必须包成 {taskSpaces}**
   };
 
+  /**
+   * 量一次**当前出口**的 IP(F6 / P4 的输入)。
+   *
+   * ⚠️ 必须复用 `createTab()` —— 它把页面建在**会话档案自己的 context** 里,量到的才是这个档案的出口;
+   * 自己建 target 会落到默认 context(那正是坑-40:代理配了、页面却落在别处,整场走直连)。
+   *
+   * 为什么直接发 CDP、不用 harness 的 `sendCDPMessage`:那条是**透传**(id 由 harness 分配、不给响应),
+   * 而这里要"读一个值"。
+   */
+  runtime.probeEgressIp = async function probeEgressIp({
+    endpoint = "https://api.ipify.org",
+    timeout = 20000,
+  } = {}) {
+    const tab = await runtime.createTab(endpoint);
+    const targetId = tab?.targetId;
+    if (typeof targetId !== "string" || targetId === "") {
+      throw new OuUutRuntimeError("量出口:建页失败(没有 targetId)", "OUUUT_EGRESS_PROBE_FAILED");
+    }
+    const deadline = Date.now() + timeout;
+    let sessionId = null;
+    let lastSeen = "";
+    try {
+      const att = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
+      sessionId = typeof att?.sessionId === "string" && att.sessionId !== "" ? att.sessionId : null;
+      if (!sessionId) throw new OuUutRuntimeError("量出口:attach 没拿到 sessionId", "OUUUT_EGRESS_PROBE_FAILED");
+      for (;;) {
+        const r = await cdp.send(
+          "Runtime.evaluate",
+          { expression: "document.body ? document.body.innerText : ''", returnByValue: true },
+          { sessionId },
+        );
+        const text = String(r?.result?.value ?? "").trim();
+        if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(text)) return text;
+        lastSeen = text.slice(0, 80);
+        if (Date.now() > deadline) {
+          throw new OuUutRuntimeError(
+            `量出口超时(${timeout} ms):页面还没给出 IP(最后读到 ${JSON.stringify(lastSeen)})`,
+            "OUUUT_EGRESS_PROBE_TIMEOUT",
+          );
+        }
+        await new Promise((r2) => setTimeout(r2, 150));
+      }
+    } finally {
+      // 这是**自检页**:量完必须收掉,别留在用户眼前
+      if (sessionId) await cdp.send("Target.detachFromTarget", { sessionId }).catch(() => {});
+      await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+    }
+  };
+
   runtime.createTaskSpace = async function createTaskSpace(name, profileId) {
     const created = spaces.create(name, profileId);
     spaces.select(created.id); // harness 期望"创建并选中"
