@@ -22,8 +22,14 @@ const HARNESS_DIST = path.resolve(
   HERE, "..", "..", "harness", "package", "ego-browser", "dist", "src", "helpers.js",
 );
 
-function boot(timeoutMs = 3_000) {
-  const cdp = spawnCdpPipe({ exe: process.execPath, args: [PEER], name: "fake-peer", timeoutMs });
+function boot(timeoutMs = 3_000, extraEnv = null) {
+  const cdp = spawnCdpPipe({
+    exe: process.execPath,
+    args: [PEER],
+    name: "fake-peer",
+    timeoutMs,
+    ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
+  });
   const registry = createTaskSpaceRegistry();
   const runtime = createOuUutRuntime({ cdp, registry });
   const previous = globalThis.ouuut;
@@ -229,4 +235,34 @@ test("maxResultLength=1 的廉价探针不去拉整棵 AX 树", async (t) => {
   await env.api.createTaskSpace("探针");
   const snap = await env.api.snapshot({ maxResultLength: 1 });
   assert.ok(snap.content.length <= 1, `探针结果要极小,实际 ${snap.content.length}`);
+});
+
+
+// ---- OOPIF:跨进程 iframe 必须真的被取到 -------------------------------------
+//
+// 主 frame 的 AX 树**看不到** OOPIF 的内容(站点隔离下是独立 target)。
+// 这条守着「runtime 的 snapshot() 默认走多帧路径」—— 否则 agent 会以为那块是空的。
+
+test("★ snapshot() 默认带上 OOPIF:跨进程按钮出现在快照里,且 ref 带 session", async (t) => {
+  const env = boot(5_000, { FAKE_PEER_OOPIF: "1" });
+  t.after(() => env.dispose());
+
+  const snap = await env.api.snapshot({ maxResultLength: 20_000 });
+  assert.match(snap.content, /\[frame T-oopif/, "必须标出帧边界");
+  assert.match(snap.content, /跨进程按钮/, "OOPIF 里的按钮必须在快照里");
+
+  const child = Object.values(snap.refs).find((r) => r.name === "跨进程按钮");
+  assert.ok(child, "OOPIF 的按钮要拿到 ref");
+  assert.equal(child.sessionId, "S-fake-T-oopif", "ref 必须带 session,否则点不到");
+  assert.equal(child.frameId, "T-oopif");
+});
+
+test("★ snapshot({includeFrames:false}) 显式关掉多帧 → 只剩主 frame", async (t) => {
+  const env = boot(5_000, { FAKE_PEER_OOPIF: "1" });
+  t.after(() => env.dispose());
+
+  const snap = await env.api.snapshot({ maxResultLength: 20_000, includeFrames: false });
+  assert.ok(!/\[frame /.test(snap.content), "关掉之后不该有帧边界");
+  assert.ok(!snap.content.includes("跨进程按钮"), "关掉之后不该出现 OOPIF 内容");
+  assert.match(snap.content, /该域名仅用于文档示例/, "主 frame 内容照旧");
 });

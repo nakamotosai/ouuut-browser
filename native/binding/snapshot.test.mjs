@@ -14,10 +14,18 @@ import { renderAxTree, selectByImportance, roleToToken } from "./snapshot.mjs";
 // ---- 构造 AX 节点的小工具 -------------------------------------------------
 
 let seq = 1;
+const INTERACTIVE_ROLES = new Set([
+  "button", "textbox", "anchor", "combobox", "searchbox", "checkbox",
+  "radio", "switch", "slider", "tab", "menuitem", "canvas", "image",
+]);
+let backendId = 1000;
 const ax = (role, name, extra = {}) => ({
   nodeId: `n${seq++}`,
   role: { value: role },
   name: { value: name },
+  // 真实 AX 节点都带 backendDOMNodeId —— 没有它就**没法寻址**,不给 ref 是对的。
+  // 夹具必须照着真实形状造,否则测出来的是假绿。
+  ...(INTERACTIVE_ROLES.has(role) ? { backendDOMNodeId: backendId++ } : {}),
   ...extra,
 });
 

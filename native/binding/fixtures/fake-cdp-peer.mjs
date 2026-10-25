@@ -14,6 +14,9 @@ import fs from "node:fs";
 import net from "node:net";
 
 const NUL = 0x00;
+/** 置 1 时本替身会演一个**跨进程 iframe**:`Target.getTargets` 多给一个 iframe target,
+ *  并且**按 sessionId** 返回不同的 AX 树 —— 用来验证 OOPIF 真取树那条路。 */
+const WITH_OOPIF = process.env.FAKE_PEER_OOPIF === "1";
 const OUT = 4; // 子进程往 fd 4 写 = 父进程读
 const IN = 3; // 父进程往 fd 3 写 = 子进程读
 
@@ -82,13 +85,32 @@ const handlers = {
       targetInfos: [
         { targetId: "T-back", type: "page", url: "https://back.example/", title: "后台页", attached: false },
         { targetId: "T-front", type: "page", url: "https://front.example/", title: "前台页", attached: true },
+        ...(WITH_OOPIF
+          ? [{ targetId: "T-oopif", type: "iframe", url: "https://oopif.example/", title: "" }]
+          : []),
       ],
     }),
   "Target.createTarget": (id, params) => reply(id, { targetId: "T-new-" + (params?.url ? "with-url" : "blank") }),
   // harness 靠这个拿到 sessionId,拿不到就抛「Target.attachToTarget returned no sessionId」
   "Target.attachToTarget": (id, params) => reply(id, { sessionId: "S-fake-" + (params?.targetId ?? "?") }),
   // 供 snapshot 走通的最小 AX 树(角色名与结构对齐 example.com 的实测输出)
-  "Accessibility.getFullAXTree": (id) =>
+  "Accessibility.getFullAXTree": (id, _params, msg) => {
+    // 带 sessionId = 那个 OOPIF 自己的树。**主 frame 的树里看不到它** —— 这正是
+    // 为什么要单独 attach 再取。
+    if (msg?.sessionId) {
+      reply(id, {
+        nodes: [
+          { nodeId: "o1", role: { value: "RootWebArea" }, name: { value: "OOPIF" }, childIds: ["o2"] },
+          {
+            nodeId: "o2",
+            role: { value: "button" },
+            name: { value: "跨进程按钮" },
+            backendDOMNodeId: 7777,
+          },
+        ],
+      });
+      return;
+    }
     reply(id, {
       nodes: [
         { nodeId: "1", role: { value: "RootWebArea" }, name: { value: "Example Domain" }, childIds: ["2", "3"] },
@@ -97,7 +119,8 @@ const handlers = {
         { nodeId: "3", role: { value: "paragraph" }, childIds: ["5"] },
         { nodeId: "5", role: { value: "StaticText" }, name: { value: "This domain is for use in documentation examples." } },
       ],
-    }),
+    });
+  },
   "Browser.getVersion": (id) =>
     reply(id, {
       protocolVersion: "1.3",
@@ -184,7 +207,7 @@ readStream.on("data", (chunk) => {
         }
       }
       const h = handlers[msg.method];
-      if (h) h(msg.id, msg.params ?? {});
+      if (h) h(msg.id, msg.params ?? {}, msg);
       else if (msg.id !== undefined) {
         // **未知方法回空响应**,不是错误 —— 本替身的目标是让 harness 的握手**跑完**,
         // 而不是复刻整套 CDP 协议。要测错误路径请显式用 `Fake.unknownMethod`。

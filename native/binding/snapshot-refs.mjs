@@ -97,7 +97,7 @@ export function createRefAllocator({ startAt = 1 } = {}) {
      *
      * @returns {number|null} 拿不到(缺 backendNodeId)时返回 null
      */
-    allocate(frameId, backendNodeId, { role, name } = {}) {
+    allocate(frameId, backendNodeId, { role, name, sessionId } = {}) {
       if (backendNodeId === null || backendNodeId === undefined) return null;
       const k = key(frameId, backendNodeId);
       const existing = assigned.get(k);
@@ -114,6 +114,9 @@ export function createRefAllocator({ startAt = 1 } = {}) {
         frameId: frameId ?? null,
         role: role ?? null,
         name: name ?? null,
+        // OOPIF 的节点在**另一个 target** 上,后续动作必须带这个 session 才路由得到。
+        // 同进程 frame 这里是 null(走主 session 就行)。
+        ...(sessionId ? { sessionId } : {}),
       });
       return refId;
     },
@@ -151,19 +154,23 @@ export function createRefAllocator({ startAt = 1 } = {}) {
  * @param {object} o.allocator `createRefAllocator()` 的返回值
  * @param {string|null} [o.frameId] 这棵树属于哪个 frame
  */
-export function assignRefs(node, { allocator, frameId = null } = {}) {
+export function assignRefs(node, { allocator, frameId = null, sessionId = null } = {}) {
   if (!node) return null;
   if (!allocator || typeof allocator.allocate !== "function") {
     throw new TypeError("assignRefs 需要一个 createRefAllocator() 的返回值");
   }
   const kids = [];
   for (const c of node.children ?? []) {
-    const a = assignRefs(c, { allocator, frameId });
+    const a = assignRefs(c, { allocator, frameId, sessionId });
     if (a) kids.push(a);
   }
 
   const refId = INTERACTIVE.has(node.role)
-    ? allocator.allocate(frameId, node.backendNodeId, { role: node.role, name: node.name })
+    ? allocator.allocate(frameId, node.backendNodeId, {
+        role: node.role,
+        name: node.name,
+        sessionId,
+      })
     : null;
 
   const out = { ...node, children: kids };
@@ -182,7 +189,15 @@ export function assignRefsForFrames(frames, { allocator } = {}) {
     if (!f || typeof f.frameId !== "string" || f.frameId === "") {
       throw new TypeError("每个 frame 都需要一个非空 frameId");
     }
-    trees.push({ frameId: f.frameId, tree: assignRefs(f.tree ?? null, { allocator: alloc, frameId: f.frameId }) });
+    trees.push({
+      frameId: f.frameId,
+      sessionId: f.sessionId ?? null,
+      tree: assignRefs(f.tree ?? null, {
+        allocator: alloc,
+        frameId: f.frameId,
+        sessionId: f.sessionId ?? null,
+      }),
+    });
   }
   return { trees, allocator: alloc, refs: alloc.snapshot() };
 }

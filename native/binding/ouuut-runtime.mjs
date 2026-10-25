@@ -43,6 +43,7 @@ import {
   USER_IN_CONTROL,
 } from "./task-spaces.mjs";
 import { buildHeader, buildSnapshot } from "./snapshot.mjs";
+import { buildMultiFrameSnapshot } from "./oopif.mjs";
 
 /** 与上游一致的默认响应超时(见 browser-runtime.ts 的 RESPONSE_TIMEOUT_MS 量级)。 */
 const VERSION_TIMEOUT_MS = 10_000;
@@ -302,7 +303,13 @@ export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profile
         header = buildHeader({ label: "p?", title: "", space: spaces.selected, tabs: [] });
       }
     }
-    return buildSnapshot({ cdp, header, options });
+    // **默认带上 OOPIF**。跨进程 iframe 的内容在主 frame 的 AX 树里是**看不到**的,
+    // 不取的话 agent 会以为那块是空的 —— 而它可能正是页面主体。
+    // 没有 OOPIF 时只多一次 `Target.getTargets` 往返。
+    if (options?.includeFrames === false) {
+      return buildSnapshot({ cdp, header, options });
+    }
+    return buildMultiFrameSnapshot({ cdp, header, options });
   };
 
   return {

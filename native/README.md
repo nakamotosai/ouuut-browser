@@ -159,6 +159,11 @@ ego 说 `root`/`text`/`anchor`/`container`。映射表落在 `snapshot.mjs`,不�
   `selectByImportance`):预算紧张时优先保 `root` → 带 ref 的可交互节点 → heading →
   有内容的 text → 有名结构节点,被丢的位置写 `...(省略 N 行)`。挑中的行**连祖先一起保**
   且**保持原序**,否则层级读不通
+- ~~OOPIF(跨进程 iframe)取树未接~~ → 已实现 `oopif.mjs`:`Target.getTargets` 找
+  `type==="iframe"` → `attachToTarget({flatten:true})` 拿 session → 在**那个 session** 上
+  `Accessibility.getFullAXTree` → 用**同一个 ref 分配器**合并。ref 记录带 `sessionId`,
+  否则后续动作路由不到那个 target。`runtime.snapshot()` **默认**走这条路
+  (传 `includeFrames:false` 可关)。单个 frame 抓失败只跳过它,不毁整张快照
 - ~~`ordered_list` / `unordered_list` 按 unordered 兜底~~ → **不再装懂**:
   CDP 的 `list` 角色不带有序信息,所以拿不到 DOM 标签时输出中性 token `list`;
   调用方传 `tagNameOf(backendNodeId)` 才会得到 `ordered_list` / `unordered_list`

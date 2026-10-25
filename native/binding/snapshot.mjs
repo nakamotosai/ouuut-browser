@@ -127,7 +127,10 @@ export function buildHeader({ label, title, space, tabs = [] }) {
  * 顺序有讲究:**先分配 ref,再化简**。反过来的话化简时看不到 ref,
  * 那条"保留带 ref 的 container"就永远不触发。
  */
-function buildPipeline(nodes, { frameId = null, tagNameOf = null } = {}) {
+export function buildPipeline(
+  nodes,
+  { frameId = null, tagNameOf = null, allocator = null, sessionId = null } = {},
+) {
   // 列表的有序/无序只能从 DOM 标签看出来(`OL`/`UL`);调用方若给了映射就用,
   // 没给就退到中性 token `list` —— 不假装知道(见 `roleToToken` 的注释)。
   const tokenOf =
@@ -136,9 +139,11 @@ function buildPipeline(nodes, { frameId = null, tagNameOf = null } = {}) {
       : roleToToken;
   const { root } = normalizeAxNodes(nodes, tokenOf);
   if (!root) return null;
-  const allocator = createRefAllocator();
-  const withRefs = assignRefs(root, { allocator, frameId });
-  return { simplified: simplifyTree(withRefs), allocator };
+  // 跨 frame 时必须**共用**一个分配器(§4.2:refId 全局唯一)。
+  // 不传就自己建一个 —— 单棵树的老用法照旧。
+  const alloc = allocator ?? createRefAllocator();
+  const withRefs = assignRefs(root, { allocator: alloc, frameId, sessionId });
+  return { simplified: simplifyTree(withRefs), allocator: alloc };
 }
 
 /** 可交互角色 —— 这些是 agent 真正能**动手**的节点,预算紧张时优先保。

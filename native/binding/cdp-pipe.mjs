@@ -290,7 +290,7 @@ export function spawnCdpPipe({
     );
   });
 
-  function send(method, params = {}, { timeoutMs: t = timeoutMs } = {}) {
+  function send(method, params = {}, { timeoutMs: t = timeoutMs, sessionId } = {}) {
     if (closed) {
       return Promise.reject(
         new CdpPipeError(`${diagnoseExit()},不能再发 ${method}`, {
@@ -299,7 +299,14 @@ export function spawnCdpPipe({
       );
     }
     const id = nextId++;
-    const payload = JSON.stringify({ id, method, params });
+    // `sessionId` 是 OOPIF 的关键:跨进程 iframe 是**独立的 target**,
+    // 命令必须带上它的 session 才会路由过去(flatten 模式下就是这么写的)。
+    const payload = JSON.stringify({
+      id,
+      method,
+      params,
+      ...(typeof sessionId === "string" && sessionId ? { sessionId } : {}),
+    });
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
