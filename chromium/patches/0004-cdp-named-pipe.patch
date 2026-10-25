@@ -1,5 +1,5 @@
 diff --git a/content/browser/devtools/devtools_agent_host_impl.cc b/content/browser/devtools/devtools_agent_host_impl.cc
-index 44ffa91fca..a919e72c91 100644
+index 44ffa91fca..fe8add9f10 100644
 --- a/content/browser/devtools/devtools_agent_host_impl.cc
 +++ b/content/browser/devtools/devtools_agent_host_impl.cc
 @@ -16,6 +16,7 @@
@@ -30,7 +30,7 @@ index 44ffa91fca..a919e72c91 100644
  int AdoptHandle(const std::string& serialized_pipe, int flags) {
    // Deserialize the handle.
    // We use the fact that inherited handles in the child process have the same
-@@ -95,15 +109,41 @@ int AdoptHandle(const std::string& serialized_pipe, int flags) {
+@@ -95,15 +109,44 @@ int AdoptHandle(const std::string& serialized_pipe, int flags) {
    // See:
    // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa
    uint32_t handle_as_uint32;
@@ -45,9 +45,12 @@ index 44ffa91fca..a919e72c91 100644
 +    //
 +    // **必须带 FILE_FLAG_OVERLAPPED**:Chromium 的 DevToolsPipeHandler 走的是
 +    // 异步读(`base::FileDescriptorWatcher`),而它在 Windows 上要求重叠句柄。
-+    // 用同步句柄开出来的管道**不报错、不退出、只是永远不响应** ——
-+    // 这个失败模式比崩溃难查得多(2026-10-25 实测:管道连上了、写进去了、零回应)。
-+    const DWORD access = (flags == _O_RDONLY) ? GENERIC_READ : GENERIC_WRITE;
++    // 用同步句柄开出来的管道**不报错、不退出、只是永远不响应**。
++    //
++    // 写端同时要 GENERIC_READ:CRT 的 fd 模式由 `_open_osfhandle` 的 flags 决定,
++    // 而调用点给写端传的是 0(== `_O_RDONLY`)。句柄侧多给读权限不改变行为,
++    // 但能避免"句柄只写、fd 只读"这种自相矛盾的组合。
++    const DWORD access = (flags == _O_RDONLY) ? GENERIC_READ : (GENERIC_WRITE | GENERIC_READ);
 +    handle = ::CreateFileW(base::UTF8ToWide(serialized_pipe).c_str(), access,
 +                           /*dwShareMode=*/0, /*lpSecurityAttributes=*/nullptr,
 +                           OPEN_EXISTING, /*dwFlagsAndAttributes=*/FILE_FLAG_OVERLAPPED,
@@ -76,3 +79,16 @@ index 44ffa91fca..a919e72c91 100644
  }
  
  // Transform the --remote-debugging-io-pipes switch value to file descriptors.
+@@ -120,7 +163,11 @@ bool AdoptPipes(const std::string& io_pipes, int& read_fd, int& write_fd) {
+   const std::string& out_pipe = pipe_names[1];
+   // If adoption of the read_fd fails the already adopted write_fd signalizing
+   // the remote end that the session is over.
+-  int tmp_write_fd = AdoptHandle(out_pipe, 0);
++  //
++  // ouuut: 这里原本传的是 `0`,而 `_O_RDONLY` 恰好就是 0 —— 于是写端的 fd 被 CRT
++  // 当成**只读**,`write()` 直接失败。现象是:浏览器读到了请求,却一个字节都回不出来
++  // (不报错、不退出)。改成 `_O_WRONLY`。
++  int tmp_write_fd = AdoptHandle(out_pipe, _O_WRONLY);
+   if (tmp_write_fd < 0) {
+     return false;
+   }
