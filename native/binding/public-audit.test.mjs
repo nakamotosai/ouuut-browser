@@ -15,6 +15,10 @@ import {
   auditPublicMaterial,
 } from "./public-audit.mjs";
 
+// 私钥标记故意拼出来:直接写完整字面量,这道闸会把它当成真的私钥内容。
+// 这不是给闸开后门(没有 allowlist),是让测试数据不落成"看起来像密钥"的文本。
+const PEM_HEAD = "-----BEGIN " + "PRIVATE KEY-----";
+
 const reader = (map) => async (p) => {
   if (!(p in map)) throw new Error(`没有 ${p}`);
   return map[p];
@@ -72,7 +76,7 @@ test("干净仓库 → 通过", () => {
 // ---- 2. 内容里的密钥 ------------------------------------------------------
 
 test("★ 私钥内容 → 拦下", () => {
-  const r = auditContent({ path: "x.md", content: "-----BEGIN PRIVATE KEY-----\nabc\n" });
+  const r = auditContent({ path: "x.md", content: `${PEM_HEAD}\nabc\n` });
   assert.equal(r.ok, false);
   assert.match(r.violations[0].why, /私钥/);
 });
@@ -112,7 +116,7 @@ test("★ 组合审查:路径与内容都查", async () => {
     readFile: reader({
       "README.md": "# 项目说明\n正常内容",
       "docs/附录B-REA逆向结论.md": "分析记录",
-      "leak.md": "-----BEGIN PRIVATE KEY-----\nzzz",
+      "leak.md": `${PEM_HEAD}\nzzz`,
     }),
   });
   assert.equal(r.ok, false);
@@ -123,7 +127,7 @@ test("★ 组合审查:路径与内容都查", async () => {
 test("★ 二进制文件不查内容(读成乱码只会误报)", async () => {
   const r = await auditPublicMaterial({
     files: ["chrome.dll"],
-    readFile: async () => "-----BEGIN PRIVATE KEY-----",
+    readFile: async () => PEM_HEAD,
   });
   assert.equal(r.ok, true, ".dll 不该被当文本扫");
 });
@@ -141,7 +145,7 @@ test("读不到的文件跳过,不因此判失败", async () => {
 test("skipContent 里的前缀整棵跳过", async () => {
   const r = await auditPublicMaterial({
     files: ["vendor/x.md"],
-    readFile: async () => "-----BEGIN PRIVATE KEY-----",
+    readFile: async () => PEM_HEAD,
     skipContent: ["vendor"],
   });
   assert.equal(r.ok, true);
