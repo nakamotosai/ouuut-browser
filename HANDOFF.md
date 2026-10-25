@@ -1,7 +1,9 @@
 # HANDOFF · ouuut 浏览器
 
-> 写于 2026-10-25 收口,**2026-10-25 经只读核验后修正**(见文末「核验记录」)。
-> 代码侧 M0–M7 全部完成,端到端实测通过。剩下的都不在代码侧,需要人/另一台机器。
+> 写于 2026-10-25 收口,**2026-10-25 经只读核验后修正**(见文末「核验记录」),
+> **2026-10-25 第二次回写**(补代码侧缺口登记 + 单机替代路径,见文末「本轮回写」)。
+> 代码侧 M0–M7 主体完成,端到端实测通过。**但功能范围里有 4 项没做**(见下「Not verified」第 6 条)。
+> **用户没有第二台电脑**(ADR-016)—— 原先写「需要第二台机器」的项,替代路径见 `docs/下一步方案.md`。
 
 ---
 
@@ -58,26 +60,40 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 
 1. **`ouuut.auditWebrtc()` 真跑** —— 逻辑有单测,真浏览器里的候选地址没采过。
 2. **自动更新真链路** —— `applyUpdate()` 有单测(原子性、哈希、回滚),没对真服务端跑过一次。
-3. **真服务器三种档案** —— `--profile-kind real|persona|disposable` 需要 Linux/容器机器。
-4. **第三方机器从零构建** —— 本机只用「卸载 + 全新目录安装」替代验证过。
+3. **真服务器三种档案** —— 机器**已经有了**:`vps-jp` = 真 Ubuntu 24.04.5 aarch64(4 vCPU / 24 GB / Node v24.22.1,
+   `chromium` snap 与 `docker` 已装)。**缺的是 POSIX 通道分支(代码工作)**,见 `docs/下一步方案.md` P1 / P2。
+   Linux 基线已实测:把 `HEAD` 打成 tar 传过去 `node --test` = **`306 条 / 298 过 / 2 红 / 6 跳过`**,
+   红的 2 条全在通道片(`native/binding/cdp-pipe.test.mjs:186`、`native/binding/task-spaces.test.mjs:167`,均 `ECONNRESET`)。
+4. **第三方机器从零构建** —— **没有第二台物理机**(ADR-016)。替代三层:`R1` 异盘符/异路径/异用户变体(本机,~4 小时机时)→
+   `R2` Hyper-V 干净 Windows VM → `R3` 公开后由真第三方跑(兜底)。**R2 没做就照实记未完成;R1 不许冒充 R2。**
 5. **分发形态** —— 0.1.3 的 payload 里 **`*.mjs` = 0 个**:JS 跑的是仓库侧 `native/`。
-   换言之这是「浏览器 + 仓库侧 JS」的组合,不是单文件分发。对外发版前要把这条定下来。
+   换言之这是「浏览器 + 仓库侧 JS」的组合,不是单文件分发。**发版前必须定案**(`docs/下一步方案.md` P6,拍板后记 ADR-017)。
+6. **代码侧还有 4 项功能没做**(README 原先写的「代码侧没有未完成项」**是错的**,已改):
+   F13 按档案绑代理/轮换/脱敏 · F14 的 HTTP/WS 与 MCP stdio 两个入口 · F6 出口一致性闸 · F9 零遥测验收
+   (+ F8 的 shadow DOM 无单独证据)。逐条现状见 `docs/里程碑.md` §代码侧缺口登记。
 
 ---
 
 ## Next safe action(只做这一件)
 
-**在一台干净的 Linux 机器上跑一次最小闭环**(同时覆盖 M5 与 M7 两条缺口):
+**P1 · 给通道补 POSIX 分支**(定义与判据见 `docs/下一步方案.md` P1)—— 它是 P2 / P8 两条验收的前置:
 
 ```bash
-git clone ssh://git@vps-jp-gitea/sai/ouuut-browser.git && cd ouuut-browser
-node --test native/binding/*.test.mjs native/bin/*.test.mjs      # 期望 306/306
-node native/bin/ouuut.mjs --profile-kind disposable --headless \
-     --version                                                    # 期望打印 Chrome/156.0.8078.47
+# 1) 本机:把传输抽成接口,新增 POSIX 实现(上游 POSIX 侧是 fd 3 读 / fd 4 写),
+#    Windows 命名管道保留为另一个实现;不要把同一段逻辑抄两遍
+node --test native/binding/*.test.mjs native/bin/*.test.mjs     # 期望仍是 306/306(不许为 Linux 弄红 Windows)
+# 2) vps-jp:打包 tracked 树传过去跑,期望从「306/298 过/2 红/6 跳过」变成 306/306
+git archive --format=tar HEAD -o /tmp/ouuut-head.tar
+scp /tmp/ouuut-head.tar vps-jp:/tmp/
+ssh vps-jp 'rm -rf /tmp/ouuut-linuxcheck && mkdir -p /tmp/ouuut-linuxcheck \
+  && tar -xf /tmp/ouuut-head.tar -C /tmp/ouuut-linuxcheck && cd /tmp/ouuut-linuxcheck \
+  && node --test native/binding/*.test.mjs native/bin/*.test.mjs'
 ```
 
-跑通了就把结果贴进 `docs/里程碑.md` M5/M7 的「未完成」处并删掉对应条目。
-**跑不通先看 `docs/坑与解法.md` 坑-29**(管道三个坑:提权 / overlapped / 写端 fd)。
+跑通了就把结果贴进 `docs/里程碑.md` M5 并删掉对应条目。
+**踩坑先看** `docs/坑与解法.md` **坑-26**(挂在 fd 3 上的「待决读」会拖着进程不退,与平台无关)与
+**坑-29**(Windows 侧三个坑:提权 / overlapped / 写端 fd 模式)。
+远端**用脚本文件**调起,不要把启动参数摊在自己的命令行里(本机 shell 侧的浏览器参数守卫会拦 `--user-data-dir` 这类字面量)。
 
 ---
 
@@ -143,3 +159,30 @@ node native/bin/ouuut.mjs --profile-kind disposable --headless \
 | 索引标题「十真相源」 | 表里 **12 行** |
 
 另核:`dist/ouuut-0.1.3-win-x64/payload` 恰 493 文件;五份收口文档 grep 私钥/token 模式 **0 命中**。
+
+---
+
+## 本轮回写(2026-10-25,第二次)
+
+用户要求「全部更新到最新状态 + 列出接下来的完整方案」,并明确**没有第二台电脑**。本轮改了什么:
+
+| 文件 | 改动 |
+|---|---|
+| **`docs/下一步方案.md`(新)** | 剩余工作包 **P1–P12** 的定义 / 顺序 / 验收判据 + **单机替代验收路径**。新正本(索引第 13 条) |
+| `docs/决策记录.md` | 新增 **ADR-016 · 验收不依赖第二台物理机**(R1/R2/R3 三层替代 + `vps-jp` 作真服务器 + 不许冒充的硬条件) |
+| `docs/里程碑.md` | ① 顶部新增**「代码侧缺口登记」**(F13/F14/F6/F9/F8-shadow 五条);② **M0「未跑满」回写**(三条遗留已全部落地,带 run-id 与真实读数);③ M5 状态与未完成改写(机器已有 + Linux 基线实测);④ M7 未完成四条各带替代路径,补登「分发形态未定」 |
+| `docs/M0-结论.md` | 头部遗留行回写(正文本来就是对的,只有这行滞后) |
+| `README.md` | 修掉**错误结论**「代码侧没有未完成项」;「唯一 next」换成 P1–P12 顺序;回归行补 Linux 基线 |
+| `docs/00-真相源索引.md` | 十二 → **十三真相源**,登记 `docs/下一步方案.md` |
+| `HANDOFF.md` | 本文件:Not verified 第 3/4/5 条改写 + 新增第 6 条;Next safe action 换成 **P1**;新增本节 |
+
+**本轮新增的实测数据(不是引用旧文档)**:
+
+| 观测 | 值 | 怎么测的 |
+|---|---|---|
+| `vps-jp` 是真 Linux 服务器 | Ubuntu 24.04.5 · aarch64 · 4 vCPU · 24 GB · Node v24.22.1 · `chromium`(snap)+ `docker` 已装 | `ssh vps-jp 'uname -a; nproc; free -m; df -h'` |
+| **Linux 上的测试基线** | **`306 条 / 298 过 / 2 红 / 6 跳过`** | `git archive HEAD` → `scp` → `node --test native/binding/*.test.mjs native/bin/*.test.mjs` |
+| 2 条红的位置与性质 | `cdp-pipe.test.mjs:186`、`task-spaces.test.mjs:167`,均 `ECONNRESET` ⇒ **通道片** | 同上 |
+| 6 条 skip 的性质 | `skip: process.platform !== "win32"` 的平台门(命名管道往返等) | `grep skip: native/binding/*.test.mjs` |
+| 本机可用的替代算力 | 24 逻辑核 / 32 GB RAM;`C:` 653.8 GB、`D:` 934.8 GB、**`E:` 5474.3 GB** 空闲;`vmcompute` 已 Running;Sandbox 未启用;WSL 未装发行版 | `Get-ComputerInfo` / `Get-PSDrive` / `Test-Path` |
+| POSIX 侧 fd 号(写计划前已核对,不是推测) | **fd 3 读 / fd 4 写** | `chromium/src/content/browser/devtools/devtools_agent_host_impl.cc:269-270`(`kReadFD`/`kWriteFD`,Windows 分支走 `--remote-debugging-io-pipes`) |
