@@ -18,8 +18,26 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI = path.join(ROOT, "native", "bin", "ouuut.mjs");
 
-const NODE_JP_1 = { id: "jp-41105", url: "socks5://198.51.100.7:41105", country: "JP", note: "ADR-013 记的固定出口" };
-const NODE_JP_2 = { id: "jp-41106", url: "socks5://198.51.100.7:41106", country: "JP", note: "同上,`41105+NN` 里的第二条" };
+// ⚠️ 真实节点地址**不入库**(无认证的 socks5,公开价值为零而别人拿到就能用;见公开闸的 publish-redact 规则)。
+// 所以从环境变量读:`OUUUT_POOL_NODES=jp-1=socks5://host:41105,jp-2=socks5://host:41106`
+const NODES = (process.env.OUUUT_POOL_NODES ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((s) => {
+    const i = s.indexOf("=");
+    return i < 0 ? null : { id: s.slice(0, i).trim(), url: s.slice(i + 1).trim(), country: "JP" };
+  })
+  .filter(Boolean);
+if (NODES.length < 2) {
+  process.stderr.write(
+    "需要至少两条节点,例如:\n" +
+      "  OUUUT_POOL_NODES='jp-1=socks5://<host>:41105,jp-2=socks5://<host>:41106' node probe/tools/pool_leases_via_ouuut.mjs\n" +
+      "  (真实地址在私有笔记里,不入库 —— 见 docs/决策记录.md 的 ADR-010 与公开闸规则)\n",
+  );
+  process.exit(2);
+}
+const [NODE_JP_1, NODE_JP_2] = NODES;
 
 /** 脚本侧:每个档案各开一张页、量一次出口;A 量**两次**用来证明中途没换出口。 */
 const SCRIPT = [

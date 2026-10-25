@@ -47,6 +47,9 @@ class Egress:
     note: str = ""
 
 
+# ⚠️ 这里的节点地址是**占位符**(TEST-NET-2,永不路由):真实的固定出口地址不入库
+#    (无认证 socks5,公开价值为零而别人拿到就能用)。取值见私有笔记,规则见公开闸的
+#    `auditPublishRedact`(ADR-010 与公开闸规则)。做对照实验前把它换成你自己验过 STICKY 的节点。
 EGRESSES: dict[str, Egress] = {
     "direct": Egress(
         name="direct",
