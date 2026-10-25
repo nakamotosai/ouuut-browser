@@ -71,6 +71,9 @@ snapshot = 454 字符,含 heading "hello ouuut" / button "pay now"
 | 什么是绝对不许做的 | `docs/法律红线.md` |
 | 本机路径、工具、凭据 | `docs/环境与资产.md` |
 | 踩过的坑 | `docs/坑与解法.md` |
+| JS harness ↔ 内核的接缝规格 | `docs/原生层接口.md` |
+| 每个内核补丁改哪个文件哪一行 | `docs/补丁点位.md` |
+| 接手先看什么(没做完的、没验过的) | `HANDOFF.md` |
 | 给 agent 的操作手册 | `AGENTS.md` |
 
 ---
