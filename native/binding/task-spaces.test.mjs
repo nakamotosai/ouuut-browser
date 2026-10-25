@@ -159,7 +159,10 @@ test("交给用户后,**只读**查询仍然放行(否则 agent 连看一眼都�
   env.api.onCDPMessage = (payload) => seen.push(JSON.parse(payload));
 
   env.api.sendCDPMessage(JSON.stringify({ id: 1, method: "Target.getTargets", params: {} }));
-  await new Promise((r) => setTimeout(r, 150));
+  // **等到出现为止**(有上限),不是死等一个固定毫秒数:
+  // 固定 150 ms 在整套并发跑时会偶发不够 —— 于是这条用例会"偶尔红",而偶发红比没有用例更坏
+  // (2026-10-25 实测:单文件 19/19 绿,整套里红过一次)。
+  for (let i = 0; i < 40 && seen.length === 0; i += 1) await new Promise((r) => setTimeout(r, 50));
   assert.equal(errors.length, 0, "只读查询不该被拦");
   assert.equal(seen.length, 1, "而且真的要送到对端并拿回响应");
 });

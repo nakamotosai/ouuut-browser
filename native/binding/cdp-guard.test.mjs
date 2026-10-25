@@ -37,10 +37,16 @@ test("★ 页面注入类拦住(检测项 pwInitScripts / documentInterception /
     "Page.addScriptToEvaluateOnNewDocument",
     "Page.setBypassCSP",
     "Page.setDocumentContent",
-    "Page.setInterceptFileChooserDialog",
   ]) {
     assert.equal(inspectCommand(m, {}).action, ACTION.HOLD, m);
   }
+});
+
+test("★ `Page.setInterceptFileChooserDialog` **必须放行**(拦下它 = 动作全废:能看快照、点不动)", () => {
+  // 2026-10-25 实测:它原本按名字被归进"页面注入"并被 HOLD,而 harness 的每个动作
+  // (click / fill / press / type)都会先发它 ⇒ 所有动作失败,报错里只有一条 CDP 消息的回显。
+  // 事实:它既不注入脚本、也不留页面绑定;放行后动作恢复,检测站读数不变。
+  assert.equal(inspectCommand("Page.setInterceptFileChooserDialog", { enabled: true }).action, ACTION.PASS);
 });
 
 test("★ 移动端/自动化模拟拦住(检测项 mobileEmulation)", () => {

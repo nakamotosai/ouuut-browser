@@ -70,8 +70,12 @@ const BINDING_DOMAINS = Object.freeze([
 const PAGE_INJECTION = Object.freeze([
   "Page.addScriptToEvaluateOnNewDocument",
   "Page.setBypassCSP",
-  "Page.setInterceptFileChooserDialog",
   "Page.setDocumentContent",
+  // ⚠️ `Page.setInterceptFileChooserDialog` **曾经**在这个名单里 —— 那是按名字归类,不是按事实。
+  //    它既不注入脚本、也不留绑定,只是让浏览器把"文件选择对话框"交给调用方;
+  //    而 harness 的**每一个动作**(click / fill / press / type)都会先发它 ⇒ 拦下它等于
+  //    **动作全废:能看快照、点不动任何东西**(2026-10-25 写 shadow DOM 探针时实测到)。
+  //    放行依据:实测动作恢复 + 检测站读数不变(见 KNOWN_SAFE 里的那条)。
 ]);
 
 /** 移动端模拟类:检测站的 `mobileEmulation`。 */
@@ -101,6 +105,10 @@ export const KNOWN_SAFE = Object.freeze([
   "Storage.setCookies",
   "Input.dispatchMouseEvent",
   "Input.dispatchKeyEvent",
+  // harness 的每个动作都会先发这条(文件选择对话框拦截)。放行依据(2026-10-25 实测):
+  //   1) 它不注入脚本、不留绑定 ⇒ 不属于"页面注入"那类(按名字归类会误伤);
+  //   2) 放行后 click/fill/press 恢复可用;不拦时检测站读数**没变**(仍是 0 红 0 黄)。
+  "Page.setInterceptFileChooserDialog",
 ]);
 
 /**
