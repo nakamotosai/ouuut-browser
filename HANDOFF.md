@@ -10,7 +10,7 @@
 ## 一句话现状
 
 装好的 0.1.3 能验签安装、能起浏览器(CDP 走命名管道,不开端口)、能建标签页、
-能出带真文本的快照。全量回归 **316/316**,公开化闸 **0 违规(308 个受控文件)**。
+能出带真文本的快照。全量回归 **318/318**,公开化闸 **0 违规(310 个受控文件)**。
 
 ```
 version  = Chrome/156.0.8078.47
@@ -58,12 +58,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 
 ## Not verified(没亲手验过,别当成已验证)
 
-1. **`ouuut.auditWebrtc()` 真跑** —— 逻辑有单测,真浏览器里的候选地址没采过。
+1. ~~**`ouuut.auditWebrtc()` 真跑** —— 逻辑有单测,真浏览器里的候选地址没采过。~~
+   → ✅ **2026-10-25 真跑了**:`probe/tools/webrtc_audit_via_ouuut.mjs` →
+   `{"total":2,"public":0,"lan":0,"mdns":2}`、`leaks: []`(**公网候选 = 0**,ADR-014 判据成立)。
+   真跑顺带发现并修掉一个真 bug:这个 API **裸调必然失败**(`Runtime.evaluate` 需要 page session)—— 坑-36。
 2. **自动更新真链路** —— `applyUpdate()` 有单测(原子性、哈希、回滚),没对真服务端跑过一次。
 3. **真服务器三种档案** —— 机器**已经有了**:`vps-jp` = 真 Ubuntu 24.04.5 aarch64(4 vCPU / 24 GB / Node v24.22.1,
    `chromium` **156.0.8078.47** snap 与 `docker` 已装)。
-   ✅ **通道这一关已过**(P1,2026-10-25):Linux 回归**红恒为 0**(改前 `298 过 / 2 红`);
-   通过/跳过数**取决于 harness `dist/` 是否就位** —— 未就位 `310 过 / 6 跳过`,就位 `314 过 / 2 跳过`,
+   ✅ **通道这一关已过**(P1,2026-10-25):Linux 回归**红恒为 0**(改前 `298 过 / 2 红`),
+   固定跳过 6 条(2 条平台门 + 4 条 `harness dist` 门),其余全过;
    **真 Chromium 在 Linux 上跑通**(快照 397 字符,含 `hello ouuut` / `pay now` / `[frame …]`),
    `ss -ltnp` 4 次采样**零监听套接字**。
    ✅ **「三种档案」这一步也已闭合(2026-10-25)**:`P2a` 把档案引擎接进会话通路(此前 `--profile-kind` 解析后无人消费),
@@ -83,13 +86,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 
 **`P8` · 检测基准收尾**(定义见 `docs/下一步方案.md` P8)。三件事,全在本机 + `vps-jp` 上做:
 
-1. **干净读数**:用**我们自己的驱动**(`native/bin/ouuut.mjs`)跑 `bot-detector` —— M1 那 3 条红是
-   omp 的 CDP harness 污染出来的,别再借它;
-2. **`ouuut.auditWebrtc()` 真跑**采候选:判据 **公网候选 = 0**(mDNS `.local` 不算泄漏);
+1. ✅ **干净读数 —— 已取得**(工具 `probe/tools/clean_reading_via_ouuut.mjs`):`bot-detector` 16 项 **0 红**
+   (`--headless` 1 黄 = 屏幕 800×600;有头 0 黄)。**顺带查出并修掉一个真 bug**(坑-35)。
+   **剩**:把它做成**探针 target 适配器**(产出 `matrix.json` 行、进对照表);
+2. ✅ **`ouuut.auditWebrtc()` 真跑 —— 已完成**(公网候选 **0**;工具 `probe/tools/webrtc_audit_via_ouuut.mjs`);
 3. ✅ **`creepjs` 判据自洽性复核 —— 已完成(2026-10-25)**:那两轮的差异来自 `a2ff8c6` 同时换掉的
    **解析器与判据**(判据是决定性的那一半),`033825` 那份产物**不可比**;守卫已加并改正过两版。
-   结论与证据见 `docs/里程碑.md` M0 与 `docs/下一步方案.md` P8。**剩下要做的**:拿一份**新的**读数
-   (多 target 同一轮跑)作为对外引用的那次。
+   结论与证据见 `docs/里程碑.md` M0 与 `docs/下一步方案.md` P8。
+   **剩**:① 上面那个探针 target 适配器;② Turnstile 再找一家**真 sitekey** 的站验一次(判据不变:只观测不交互)。
 
 **远端同步(有两个坑,都是实测出来的)**:
 
@@ -218,8 +222,8 @@ M5 段旧的「6 条 skip 是平台门」说法未随 M0 一起清除、P8 把�
 |---|---|
 | **改了什么** | `native/binding/cdp-pipe.mjs`:传输层流的 `error` 统一走 `noteTransportError`(**只记不拒**),**读端 stdio[4] 与写端 stdio[3] 两端都挂**;`diagnoseExit()` 带上传输层错误;`exit` 时若已知传输层报过错,**不再等那 2 秒兜底** |
 | **根因** | POSIX 上 `child.stdio[3]` 没挂 `error`;对端一死它抛 `ECONNRESET` ⇒ **未捕获异常**,报错乱窜到别的用例上 ⇒ 一条根因伪装成两条无关失败(`cdp-pipe.test.mjs:186` + `task-spaces.test.mjs:167`)。记入 `docs/坑与解法.md` **坑-31** |
-| **Windows** | `316/316`(0 跳过) |
-| **Linux** | **红恒为 0**;`310 过 / 6 跳过`(dist 未就位)或 `314 过 / 2 跳过`(dist 就位) |
+| **Windows** | `318/318`(0 跳过) |
+| **Linux** | **红恒为 0**;固定跳过 6 条 = 2 条平台门 + 4 条 `harness dist` 门(dist 就位时那 4 条会真跑,故"通过数"随构建状态变;总数 318) |
 | **真浏览器(Linux)** | `Chrome/156.0.8078.47` → `createTab` → 快照 **397 字符**,含 `heading "hello ouuut"` / `button "pay now"` / 真 `[frame …]`(OOPIF) |
 | **ADR-005** | `ss -ltnp` 连续 4 次采样,chromium / node **零监听套接字** |
 | 新坑 | **坑-31**(POSIX 写端流错误把诊断冲掉)、**坑-32**(snap 私有 `/tmp` ⇒ `file://` 页面报「couldn't be accessed」,页面要放 `$HOME`) |

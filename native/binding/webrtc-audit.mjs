@@ -113,6 +113,36 @@ export function auditCandidates(candidates) {
 }
 
 /**
+ * 没有给 `sessionId` 时,**自己挂一个 page 的 session**。
+ *
+ * `Runtime.evaluate` **必须有 target 上下文** —— 直接对着浏览器主通道发,会得到
+ * `'Runtime.evaluate' wasn't found`(2026-10-25 在真机上就是这么炸的:`ouuut.auditWebrtc()`
+ * 从 CLI 脚本里裸调,拿不到 page session,于是这个"自检 API"其实一直不可用)。
+ */
+async function resolvePageSession(cdp, timeoutMs) {
+  const t = await cdp.send("Target.getTargets", {}, { timeoutMs });
+  const pages = (t?.targetInfos ?? []).filter((x) => x.type === "page");
+  if (pages.length === 0) return undefined;
+  const a = await cdp.send(
+    "Target.attachToTarget",
+    { targetId: pages[0].targetId, flatten: true },
+    { timeoutMs },
+  );
+  return a?.sessionId;
+}
+
+/** 探针拿不到结果时的标准返回 —— **不通过**不是"没泄漏"。 */
+function noResult(error) {
+  return {
+    ok: false,
+    counts: { total: 0, public: 0, lan: 0, mdns: 0, loopback: 0, unknown: 0 },
+    leaks: [],
+    warnings: [],
+    error,
+  };
+}
+
+/**
  * 在**真实页面**里跑一次审计。
  *
  * 需要 `Runtime.evaluate` —— 这是一次**自检**,不是正常操作路径,所以用它是合适的;
@@ -122,20 +152,31 @@ export function auditCandidates(candidates) {
  */
 export async function auditWebrtc({ cdp, gatherMs = 2_000, timeoutMs = 20_000, sessionId } = {}) {
   const expression = buildWebrtcProbeScript({ gatherMs });
-  const res = await cdp.send(
-    "Runtime.evaluate",
-    { expression, awaitPromise: true, returnByValue: true, silent: true },
-    { timeoutMs, ...(sessionId ? { sessionId } : {}) },
-  );
+
+  let sid = sessionId;
+  if (!sid) {
+    // 挂不上就退回"无 session",让下面那条错误把原因说清楚 —— 不要在这里抛,
+    // 那会让调用方以为"自检失败"是通道坏了。
+    sid = await resolvePageSession(cdp, timeoutMs).catch(() => undefined);
+  }
+
+  let res;
+  try {
+    res = await cdp.send(
+      "Runtime.evaluate",
+      { expression, awaitPromise: true, returnByValue: true, silent: true },
+      { timeoutMs, ...(sid ? { sessionId: sid } : {}) },
+    );
+  } catch (e) {
+    return noResult(
+      `自检没能执行:${e?.message ?? e}(没有可用的 page 上下文时会这样 —— ` +
+        `先建一个标签页再调,或把 page 的 sessionId 传进来)`,
+    );
+  }
+
   const value = res?.result?.value;
   if (!value || typeof value !== "object") {
-    return {
-      ok: false,
-      counts: { total: 0, public: 0, lan: 0, mdns: 0, loopback: 0, unknown: 0 },
-      leaks: [],
-      warnings: [],
-      error: "探针没有返回结果(页面可能禁止了 WebRTC 或 evaluate 被拦)",
-    };
+    return noResult("探针没有返回结果(页面可能禁止了 WebRTC 或 evaluate 被拦)");
   }
   const verdict = auditCandidates(value.candidates ?? []);
   return { ...verdict, error: value.error ?? null };

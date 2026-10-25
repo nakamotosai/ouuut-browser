@@ -115,12 +115,18 @@ test("★ buildWebrtcProbeScript:gatherMs 传垃圾也要退到安全值", () =>
 
 // ---- 4. 端到端(假 CDP)----------------------------------------------------
 
-function fakeCdp(value) {
+function fakeCdp(value, { withPage = true } = {}) {
   const calls = [];
   return {
     calls,
     async send(method, params, opts = {}) {
       calls.push({ method, params, sessionId: opts.sessionId });
+      if (method === "Target.getTargets") {
+        return {
+          targetInfos: withPage ? [{ targetId: "T-1", type: "page", url: "https://example.com" }] : [],
+        };
+      }
+      if (method === "Target.attachToTarget") return { sessionId: "S-auto" };
       return { result: { value } };
     },
   };
@@ -132,8 +138,28 @@ test("★ auditWebrtc:把候选接上判定,并透传 error", async () => {
   assert.equal(v.ok, false);
   assert.equal(v.leaks.length, 1);
   assert.equal(v.error, null);
-  assert.equal(cdp.calls[0].method, "Runtime.evaluate");
-  assert.equal(cdp.calls[0].params.awaitPromise, true, "必须等 promise,否则拿到空数组");
+  // 没给 sessionId ⇒ 先自己挂一个 page session,再带着 sessionId 发 evaluate
+  assert.deepEqual(
+    cdp.calls.map((c) => c.method),
+    ["Target.getTargets", "Target.attachToTarget", "Runtime.evaluate"],
+    "应先把 page 挂上再 evaluate(2026-10-25 真机:裸发 evaluate 会得到 'wasn't found')",
+  );
+  const ev = cdp.calls.at(-1);
+  assert.equal(ev.sessionId, "S-auto");
+  assert.equal(ev.params.awaitPromise, true, "必须等 promise,否则拿到空数组");
+});
+
+test("★ auditWebrtc:evaluate 被拒 → 返回可读原因,**不抛**(自检失败不是通道坏了)", async () => {
+  const cdp = {
+    async send(method) {
+      if (method === "Target.getTargets") return { targetInfos: [] };
+      throw new Error("'Runtime.evaluate' wasn't found");
+    },
+  };
+  const v = await auditWebrtc({ cdp });
+  assert.equal(v.ok, false);
+  assert.match(v.error, /自检没能执行/);
+  assert.match(v.error, /Runtime\.evaluate/);
 });
 
 test("★ auditWebrtc:探针没返回结果 → 判不通过并说明(不能当成「没泄漏」)", async () => {
@@ -143,8 +169,9 @@ test("★ auditWebrtc:探针没返回结果 → 判不通过并说明(不能当�
   assert.match(v.error, /探针没有返回结果/);
 });
 
-test("★ auditWebrtc:OOPIF 的 sessionId 要透传", async () => {
+test("★ auditWebrtc:给了 sessionId 就不再去挂 page(OOPIF 的透传路径)", async () => {
   const cdp = fakeCdp({ error: null, candidates: [] });
   await auditWebrtc({ cdp, sessionId: "S-x" });
+  assert.deepEqual(cdp.calls.map((c) => c.method), ["Runtime.evaluate"]);
   assert.equal(cdp.calls[0].sessionId, "S-x");
 });

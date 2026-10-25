@@ -66,6 +66,22 @@ test("有头:给了位置就钉住,没给就最大化", () => {
   assert.ok(plan([]).args.includes("--start-maximized"));
 });
 
+test("★ navigator.webdriver 必须走 --disable-blink-features,不能混进 --disable-features", () => {
+  // 2026-10-25 真机暴露的 bug:AutomationControlled 是 **Blink** 特性,
+  // 放进 `--disable-features` 那份名单是**无效**的 —— 检测站照样报 `navigator.webdriver = true`(坑-35)。
+  const args = plan([]).args;
+  assert.ok(
+    args.includes("--disable-blink-features=AutomationControlled"),
+    "必须显式给 --disable-blink-features=AutomationControlled",
+  );
+  const features = args.find((a) => a.startsWith("--disable-features="));
+  assert.ok(features, "还应有 --disable-features 那份名单");
+  assert.ok(
+    !features.includes("AutomationControlled"),
+    "AutomationControlled 不该出现在 --disable-features 里(那是无效写法,会给人一种'已经关了'的错觉)",
+  );
+});
+
 test("★ 同一档案:桌面与无头的计划**只在窗口参数与 --headless 上不同**", () => {
   for (const kind of KINDS) {
     const base = ["--profile-kind", kind, DIR_FLAG, DIR_VALUE];

@@ -88,16 +88,20 @@ probe/out/<run-id>/
 
 `matrix.json` 每行 = 一个 `probe.base.Result`。
 
-### 3.4 判据自查用例(不起浏览器)
+### 3.4 直接可跑的工具(不起探针框架)
 
 ```bash
-python probe/tools/check_creepjs_classify.py     # 13 条,13/13 通过
+python probe/tools/check_creepjs_classify.py                     # 判据自查:13 条,13/13 通过
+node  native/bin/ouuut.mjs nodejs --headless --timeout 60 \
+      < probe/tools/clean_reading_via_ouuut.mjs                  # 用自己的驱动取 bot-detector 干净读数
+node  native/bin/ouuut.mjs nodejs --headless --timeout 60 \
+      < probe/tools/webrtc_audit_via_ouuut.mjs                   # auditWebrtc 真跑(判据:公网候选 = 0)
 ```
 
-为什么要单独放一个文件:**判据本身也会错**,而它错起来是"假绿"。
-2026-10-25 的两次只读核验各抓到一版 `creepjs._classify` 守卫的毛病(防假绿造出假红、盖不住名单外键),
+为什么要单独放这些文件:**判据与自检本身也会错**,而它们错起来是"假绿"。
+2026-10-25 的核验抓到过 `creepjs._classify` 守卫的两版毛病(防假绿造出假红、盖不住名单外键),
 当时那些用例只在对话里 —— 说话不能当证据,于是落盘。
-凡是"从文本抽取再据此下结论"的 site,都应配一份这样的直接可跑的用例。
+凡是"从文本抽取再据此下结论"或"我提供一个自检 API"的地方,都应配一份**直接可跑**的用例。
 
 ---
 

@@ -62,7 +62,11 @@ test("启动参数:disable-features 里不含 ThirdPartyStoragePartitioning", ()
   const f = args.find((a) => a.startsWith("--disable-features="));
   assert.ok(f, "应该有 --disable-features");
   assert.ok(!f.includes("ThirdPartyStoragePartitioning"), "这一项要保留(§三)");
-  assert.ok(f.includes("AutomationControlled"), "navigator.webdriver 靠它");
+  // ⚠️ 这里原来断言「f.includes("AutomationControlled")」并写着「navigator.webdriver 靠它」——
+  // 那是**把 bug 钉住了**:AutomationControlled 是 Blink 特性,放进 `--disable-features` 不生效,
+  // 真机检测站如实报 `navigator.webdriver = true`(2026-10-25,坑-35)。
+  // 正确写法在下面那条测试里守:`--disable-blink-features=AutomationControlled`。
+  assert.ok(!f.includes("AutomationControlled"), "它是 Blink 特性,不该出现在这份名单里");
 });
 
 test("启动参数:proxy 会带 bypass 列表(loopback 与 tailnet 不走代理)", () => {

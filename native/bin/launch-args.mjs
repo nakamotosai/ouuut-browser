@@ -63,7 +63,9 @@ export const FORBIDDEN_ARGS = [
 
 const DEFAULT_FEATURES_TO_DISABLE = [
   // 注意:**不含** ThirdPartyStoragePartitioning(docs/补丁点位.md §三 明确要求)
-  "AutomationControlled",
+  // 也**不含** AutomationControlled —— 它是 **Blink** 特性,得走 `--disable-blink-features`,
+  // 写进这份 `--disable-features` 名单是**无效**的(2026-10-25 真机实测:
+  // 检测站如实报 `navigator.webdriver = true`,即这一项从来就没生效,见坑-35)。
   "CalculateNativeWinOcclusion", // 无头/后台窗口时的遮挡计算会拖慢渲染
   "Translate",
   "AcceptCHFrame",
@@ -230,6 +232,10 @@ export function buildBrowserArgs(opts = {}, env = {}) {
     "--no-sandbox",
 
     // ---- 那六项里的"要加的" ----
+    // `navigator.webdriver` 走的是 **Blink 特性**开关:`--disable-blink-features=AutomationControlled`。
+    // ⚠️ 2026-10-25 修:此前它被误放进下面的 `--disable-features` 名单里 —— 那份名单不认 Blink 特性,
+    // 于是这条**从来没生效过**,真机检测站如实报 `navigator.webdriver = true`(坑-35)。
+    "--disable-blink-features=AutomationControlled",
     `--disable-features=${DEFAULT_FEATURES_TO_DISABLE.join(",")}`,
     // ---- 视口 / 窗口位置 ----
     // **无头下一条都不给** —— 没有窗口可摆,给了只是噪音,还会让
