@@ -116,24 +116,25 @@ _EXTRACT_JS = r"""
 def _classify(detail: dict) -> str:
     tells = detail.get("tells") or {}
     grade = detail.get("headlessGrade")
-    head = detail.get("headSection") or ""
 
-    # **fail-closed**:页面上明明列着 Headless 的 tell,我们却一个名字都没匹配上
-    # ⇒ 该站措辞变了(或解析退化了)。这时**不许给 passed** —— 那是把"没看懂"读成"很干净"。
-    #
-    # 为什么专门加这一条(2026-10-25 的取证):`probe/out/20261024-033825` 那轮用的是**旧的**
-    # 通用正则解析,`× Like HeadlessnoChrome: truehasPermissionsBug: true...` 一路粘连,
-    # 解出 7 个错键(`truenodownlinkmax` / `truehasheadlessworkerua` …),一个都不在
-    # `HEADLESS_TELLS` 里 —— 于是被判 `passed`,而同一份页面读数是 `88%`。
-    # 对同一张页面,`034257`(逐个名字查子串的新解析)解出 13 个正确键、判 `detected`。
-    if not tells and "Like Headless" in head:
-        return VERDICT_ERROR
-
-    if grade is None and not tells:
-        return VERDICT_ERROR  # 什么都没抓到 → 探针无效(不等于通过)
+    # **等级优先**(口径见下)。拿得到等级就用它 —— 不要在这里"顺手"再拿 tell 说事:
+    # 2026-10-25 的核验实测抓到过一版守卫把 `grade=88` 的 `detected` 也打成了 `error`,
+    # 那是用「防假绿」的名义制造了假红。
     if grade is not None:
         return VERDICT_DETECTED if grade >= GRADE_DETECTED else VERDICT_PASSED
-    # 没有等级时退回到 tell:任一 headless 特征的 tell 为 true 即为 detected
+
+    # 等级缺席 ⇒ 只能靠 tell。**fail-closed**:连一个在 `HEADLESS_TELLS` 里的名字都没出现时,
+    # 分不清「真干净」与「解析退化 / 该站措辞变了」—— 这时判 `error`,**不判 passed**。
+    #
+    # 为什么按"名单命中"判、而不是按"有没有 tell"或"段里有没有某个字面量"判:
+    #   * 按"有没有 tell"会漏:解析器今天就会产出 `hasKnownBgColor` / `prefersLightColor` 这类
+    #     **不在名单里**的键 —— 那时 `tells` 非空,守卫却形同虚设(核验实测,case 5/6);
+    #   * 按 `Like Headless` 这类**字面量**会漏:该站文案一改守卫就整体失效。
+    # 名单本身是我们真正依赖的东西,所以就按它判。
+    if not any(k in HEADLESS_TELLS for k in tells):
+        return VERDICT_ERROR
+
+    # 名单里的名字至少出现了一个 ⇒ 有可判读据:任一为 true 即 detected
     return VERDICT_DETECTED if any(v for k, v in tells.items() if k in HEADLESS_TELLS) else VERDICT_PASSED
 
 

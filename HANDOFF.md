@@ -10,7 +10,7 @@
 ## 一句话现状
 
 装好的 0.1.3 能验签安装、能起浏览器(CDP 走命名管道,不开端口)、能建标签页、
-能出带真文本的快照。全量回归 **306/306**,公开化闸 **0 违规(305 个受控文件)**。
+能出带真文本的快照。全量回归 **316/316**,公开化闸 **0 违规(307 个受控文件)**。
 
 ```
 version  = Chrome/156.0.8078.47
@@ -63,7 +63,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 3. **真服务器三种档案** —— 机器**已经有了**:`vps-jp` = 真 Ubuntu 24.04.5 aarch64(4 vCPU / 24 GB / Node v24.22.1,
    `chromium` **156.0.8078.47** snap 与 `docker` 已装)。
    ✅ **通道这一关已过**(P1,2026-10-25):Linux 回归**红恒为 0**(改前 `298 过 / 2 红`);
-   通过/跳过数**取决于 harness `dist/` 是否就位** —— 未就位 `300 过 / 6 跳过`,就位 `304 过 / 2 跳过`,
+   通过/跳过数**取决于 harness `dist/` 是否就位** —— 未就位 `310 过 / 6 跳过`,就位 `314 过 / 2 跳过`,
    **真 Chromium 在 Linux 上跑通**(快照 397 字符,含 `hello ouuut` / `pay now` / `[frame …]`),
    `ss -ltnp` 4 次采样**零监听套接字**。
    ✅ **「三种档案」这一步也已闭合(2026-10-25)**:`P2a` 把档案引擎接进会话通路(此前 `--profile-kind` 解析后无人消费),
@@ -86,9 +86,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 1. **干净读数**:用**我们自己的驱动**(`native/bin/ouuut.mjs`)跑 `bot-detector` —— M1 那 3 条红是
    omp 的 CDP harness 污染出来的,别再借它;
 2. **`ouuut.auditWebrtc()` 真跑**采候选:判据 **公网候选 = 0**(mDNS `.local` 不算泄漏);
-3. **`creepjs` 判据自洽性复核(必做,不是可选项)**:`20261024-033825` 与 `034257` 的 `headlessGrade`
-   **完全相同**(`88/38/25/19`)却判出不同 verdict(`passed` vs `detected`)⇒ 先用判据把历史产物重算一遍,
-   **在此之前不引用 creepjs 的任何单轮结论**。
+3. ✅ **`creepjs` 判据自洽性复核 —— 已完成(2026-10-25)**:那两轮的差异来自 `a2ff8c6` 同时换掉的
+   **解析器与判据**(判据是决定性的那一半),`033825` 那份产物**不可比**;守卫已加并改正过两版。
+   结论与证据见 `docs/里程碑.md` M0 与 `docs/下一步方案.md` P8。**剩下要做的**:拿一份**新的**读数
+   (多 target 同一轮跑)作为对外引用的那次。
 
 **远端同步(有两个坑,都是实测出来的)**:
 
@@ -217,12 +218,12 @@ M5 段旧的「6 条 skip 是平台门」说法未随 M0 一起清除、P8 把�
 |---|---|
 | **改了什么** | `native/binding/cdp-pipe.mjs`:传输层流的 `error` 统一走 `noteTransportError`(**只记不拒**),**读端 stdio[4] 与写端 stdio[3] 两端都挂**;`diagnoseExit()` 带上传输层错误;`exit` 时若已知传输层报过错,**不再等那 2 秒兜底** |
 | **根因** | POSIX 上 `child.stdio[3]` 没挂 `error`;对端一死它抛 `ECONNRESET` ⇒ **未捕获异常**,报错乱窜到别的用例上 ⇒ 一条根因伪装成两条无关失败(`cdp-pipe.test.mjs:186` + `task-spaces.test.mjs:167`)。记入 `docs/坑与解法.md` **坑-31** |
-| **Windows** | `306/306`(改前改后一致,0 跳过) |
-| **Linux** | **红恒为 0**(改前 `298 过 / 2 红`);`300 过 / 6 跳过`(dist 未就位)或 `304 过 / 2 跳过`(dist 就位) |
+| **Windows** | `316/316`(0 跳过) |
+| **Linux** | **红恒为 0**;`310 过 / 6 跳过`(dist 未就位)或 `314 过 / 2 跳过`(dist 就位) |
 | **真浏览器(Linux)** | `Chrome/156.0.8078.47` → `createTab` → 快照 **397 字符**,含 `heading "hello ouuut"` / `button "pay now"` / 真 `[frame …]`(OOPIF) |
 | **ADR-005** | `ss -ltnp` 连续 4 次采样,chromium / node **零监听套接字** |
 | 新坑 | **坑-31**(POSIX 写端流错误把诊断冲掉)、**坑-32**(snap 私有 `/tmp` ⇒ `file://` 页面报「couldn't be accessed」,页面要放 `$HOME`) |
-| **没做的** | 没有为「各平台对称」新增 POSIX 专属用例:Linux 上**通道片那 60 余条**(全仓 4 个文件 67 条 `import spawnCdpPipe`)本来就走 fd3/4(含分帧/超时/竞态),再加对称用例只是重复覆盖 |
+| **没做的** | 没有为「各平台对称」新增 POSIX 专属用例:Linux 上**通道片那 70 余条**(全仓 **5 个测试文件、74 条** `import spawnCdpPipe`)本来就走 fd3/4(含分帧/超时/竞态),再加对称用例只是重复覆盖 |
 
 ---
 

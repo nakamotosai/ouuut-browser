@@ -53,7 +53,7 @@ def launch(spec: LaunchSpec) -> Iterator[BrowserFacade]   # 上下文管理器
 | `patchright-hardened` | 上面两者叠加 | **决定性格**:不写内核代码能走多远 | ✅ |
 | `cloak` | CloakBrowser | 商业反检测对照(含内核补丁) | ✅ |
 | `ego` | ego lite | 「进程内通道 + 不发 `Runtime.enable`」的实证(REA B1/B2) | ✅ |
-| `ouuut` | 我方 | 自有内核**尚未建成**,M1 之后接入 | ❌ 未实现 |
+| `ouuut` | 我方 | 自有 Chromium + 自有原生层(**M1 已建成**;驱动入口 `native/bin/ouuut.mjs`) | ⚠️ **适配器未写** —— P8 要做的事:加一个走本 CLI 的 target,才能取"干净读数" |
 
 ### 3.2 检测站(site)
 
@@ -72,9 +72,9 @@ class Site:
 | 代号 | URL | 回答什么 |
 |---|---|---|
 | `bot-detector` | `bot-detector.rebrowser.net` | **最直接**:CDP 泄漏项逐条 |
-| `creepjs` | `abrahamjuliot.github.io/creepjs` | 指纹一致性(trust score) |
+| `creepjs` | `abrahamjuliot.github.io/creepjs` | **headless 轴** —— 读 `Headless` 段的**等级**(≥ 50% 判 detected,等级优先)+ 布尔 tell(兜底)。**不是** trust score:该站没有这个东西 |
 | `browserleaks` | `browserleaks.com` | WebRTC / Canvas / WebGL / 字体 |
-| `turnstile` | Cloudflare Turnstile demo | 实战门槛(能不能过)。❌ **未实现** —— 需交互式点击;`nopecha.com/demo/cloudflare` 直连 403 |
+| `turnstile` | Cloudflare Turnstile demo | 实战门槛(免交互会不会被放行)。**只观测、不交互**(红线 L3);官方 dummy demo 要识别并判 `error`(它不做评分) |
 
 ### 3.3 产物
 
