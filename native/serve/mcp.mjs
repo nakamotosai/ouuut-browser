@@ -6,6 +6,8 @@
 // ⚠️ **stdout 是协议通道**:任何日志/警告都必须走 stderr。混一句进去,对面就报解析错,
 //    而错误现象与你写的那句话毫无关系 —— 这类问题最难查。
 
+import { BATCH_OPS, runBatch } from "./batch.mjs";
+import { WAIT_LOAD_STATES, WAIT_SELECTOR_STATES } from "./core.mjs";
 import { ServeError } from "./errors.mjs";
 
 export const MCP_PROTOCOL_VERSION = "2024-11-05";
@@ -36,12 +38,86 @@ export const MCP_TOOLS = [
     description: "浏览器版本(最便宜的一次存活探针)。",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "browser_batch",
+    description:
+      "按顺序执行一组步骤(goto / snapshot / tabs / version / wait),返回每一步的结果;" +
+      "默认遇到第一个错误就停(stoppedAt 指到那一步),continueOnError:true 则继续跑完。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        steps: {
+          type: "array",
+          description: "有序步骤;每步一个 op,加上该 op 自己的参数",
+          items: {
+            type: "object",
+            properties: {
+              op: { type: "string", enum: [...BATCH_OPS] },
+              url: { type: "string", description: "goto 的目标" },
+              timeoutMs: { type: "number", description: "goto / wait 的超时(毫秒)" },
+              maxResultLength: { type: "number", description: "snapshot 的截断长度" },
+              selector: { type: "string", description: "wait:等选择器出现/可见" },
+              state: { type: "string", enum: [...WAIT_SELECTOR_STATES], description: "wait:选择器状态(默认 visible)" },
+              text: { type: "string", description: "wait:等页面可见文本包含它" },
+              loadState: { type: "string", enum: [...WAIT_LOAD_STATES], description: "wait:等加载状态" },
+            },
+            required: ["op"],
+          },
+        },
+        continueOnError: { type: "boolean", description: "true = 某步失败后继续执行后面的步骤" },
+      },
+      required: ["steps"],
+    },
+  },
+  {
+    name: "browser_wait",
+    description:
+      "等页面进入某种状态:加载状态(loadState)/ CSS 选择器(selector,可带 state)/ 可见文本(text);" +
+      "三者只能给一个,都不给等于等 load。走 harness 的页面等待 API,不轮询快照。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        loadState: { type: "string", enum: [...WAIT_LOAD_STATES] },
+        selector: { type: "string" },
+        state: { type: "string", enum: [...WAIT_SELECTOR_STATES], description: "只对 selector 有意义(默认 visible)" },
+        text: { type: "string" },
+        timeoutMs: { type: "number", description: "默认 30000" },
+      },
+    },
+  },
+  {
+    name: "browser_profile",
+    description:
+      "当前档案(profileId / kind)+ 本次会话可见的档案列表;档案引擎不可达时如实标 archiveReachable:false。" +
+      "经 MCP 建/关档案未开放(capabilities.create/close 恒为 false)。",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
 
 const text = (t) => ({ content: [{ type: "text", text: String(t) }] });
 
+/**
+ * 工具名 → 处理函数。**这里只做"调 core + 包成 MCP 结果"**,不放业务逻辑
+ * (batch 的编排在 `batch.mjs`,等待语义在 `core.wait`)。
+ */
+const TOOL_HANDLERS = {
+  browser_goto: async (core, args) => text(JSON.stringify(await core.goto(args.url, args))),
+  browser_snapshot: async (core, args) => text((await core.snapshot(args ?? {})).text),
+  browser_tabs: async (core) => text(JSON.stringify(await core.tabs())),
+  browser_version: async (core) => text(JSON.stringify(await core.version())),
+  browser_wait: async (core, args) => text(JSON.stringify(await core.wait(args ?? {}))),
+  browser_batch: async (core, args) => {
+    const r = await runBatch(core, args?.steps, { continueOnError: Boolean(args?.continueOnError) });
+    const out = text(JSON.stringify(r));
+    // 有步骤失败 = 这次工具调用**没有完全成功**;per-step 结果仍然在 content 里。
+    if (!r.ok) out.isError = true;
+    return out;
+  },
+  browser_profile: async (core) => text(JSON.stringify(await core.profile())),
+};
+
 /** 一条 JSON-RPC 消息 → 一条响应(`null` 表示这是通知,不该回)。 */
-export async function handleMcpMessage(core, msg) {
+export async function handleMcpMessage(core, msg, { recorder = null } = {}) {
   if (!msg || typeof msg !== "object") return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "不是 JSON-RPC 消息" } };
   const id = msg.id ?? null;
   const isNotification = msg.id === undefined || msg.id === null;
@@ -66,14 +142,30 @@ export async function handleMcpMessage(core, msg) {
       case "tools/call": {
         const name = msg.params?.name;
         const args = msg.params?.arguments ?? {};
-        if (name === "browser_goto") return reply(text(JSON.stringify(await core.goto(args.url, args))));
-        if (name === "browser_snapshot") {
-          const r = await core.snapshot(args ?? {});
-          return reply(text(r.text));
+        const handler = Object.hasOwn(TOOL_HANDLERS, name) ? TOOL_HANDLERS[name] : null;
+        if (!handler) return fail(-32602, `没有这个工具:${name}`);
+        const startedAt = Date.now();
+        try {
+          const result = await handler(core, args);
+          // 轨迹是**旁路**:记录器自己保证不抛(写不进去最多在 stderr 说一句)。
+          await recorder?.recordToolCall({
+            tool: name,
+            args,
+            ok: result?.isError !== true,
+            result,
+            durationMs: Date.now() - startedAt,
+          });
+          return reply(result);
+        } catch (err) {
+          await recorder?.recordToolCall({
+            tool: name,
+            args,
+            ok: false,
+            error: err,
+            durationMs: Date.now() - startedAt,
+          });
+          throw err;
         }
-        if (name === "browser_tabs") return reply(text(JSON.stringify(await core.tabs())));
-        if (name === "browser_version") return reply(text(JSON.stringify(await core.version())));
-        return fail(-32602, `没有这个工具:${name}`);
       }
       default:
         return fail(-32601, `不认识的方法:${msg.method}`);
@@ -97,9 +189,10 @@ export async function handleMcpMessage(core, msg) {
  * @param {NodeJS.ReadableStream} [o.stdin]
  * @param {NodeJS.WritableStream} [o.stdout]
  * @param {NodeJS.WritableStream} [o.stderr] 日志走这里(**绝不走 stdout**)
+ * @param {object} [o.recorder] 轨迹记录器(`trajectory.mjs`);不给就不记
  * @returns {Promise<number>} 退出码
  */
-export async function runMcpServer({ core, stdin = process.stdin, stdout = process.stdout, stderr = process.stderr } = {}) {
+export async function runMcpServer({ core, stdin = process.stdin, stdout = process.stdout, stderr = process.stderr, recorder = null } = {}) {
   if (!core) throw new ServeError("runMcpServer 需要 core");
   let buf = "";
   let pending = Promise.resolve();
@@ -120,7 +213,7 @@ export async function runMcpServer({ core, stdin = process.stdin, stdout = proce
         write({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "JSON 解析失败" } });
         return;
       }
-      const res = await handleMcpMessage(core, msg);
+      const res = await handleMcpMessage(core, msg, { recorder });
       if (res !== null) write(res);
     });
   };

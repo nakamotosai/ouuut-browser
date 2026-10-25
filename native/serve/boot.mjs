@@ -77,6 +77,13 @@ export async function bootServeCore({ argv = [], env = process.env, spawn } = {}
       harness: { taskSpace: globalThis.taskSpace, getBrowserVersion: globalThis.getBrowserVersion },
       api: session.api,
       spaceName: SERVE_SPACE_NAME,
+      // 档案层是**会话级**的:会话给了 kind 才有 archive(否则只有硬编码的默认档案)。
+      // 这里原样交出去,`core.profile()` 才能如实回答"当前档案是谁、引擎可不可达"。
+      profile: {
+        sessionProfileId: session.session?.sessionProfileId ?? null,
+        profiles: session.session?.profiles ?? null,
+        archive: session.session?.archive ?? null,
+      },
     });
 
     return { server, opts, session, core, namespace };

@@ -26,6 +26,21 @@ export function fakeCore(overrides = {}) {
       calls.push({ op: "version" });
       return { version: "Chrome/156.0.8078.47" };
     },
+    async wait(options = {}) {
+      calls.push({ op: "wait", options });
+      return { waitedFor: "loadState", loadState: "load", timeoutMs: 30000, elapsedMs: 1 };
+    },
+    async profile() {
+      calls.push({ op: "profile" });
+      return {
+        profileId: "default",
+        kind: null,
+        isDefault: true,
+        archiveReachable: false,
+        profiles: [],
+        capabilities: { create: false, close: false, reason: "假 core:未接线" },
+      };
+    },
     ...overrides,
   };
 }
@@ -51,6 +66,17 @@ export function fakeHarness(overrides = {}) {
             async snapshot(options = {}) {
               calls.push({ op: "snapshot", options });
               return '[p2 "标题" | space "serve"(1)]\n正文一行';
+            },
+            async waitForSelector(selector, options = {}) {
+              calls.push({ op: "waitForSelector", selector, options });
+              return true;
+            },
+            async waitForFunction(expression, argument, options = {}) {
+              calls.push({ op: "waitForFunction", expression, argument, options });
+              return true;
+            },
+            async waitForLoadState(state = "load", options = {}) {
+              calls.push({ op: "waitForLoadState", state, options });
             },
           };
         },

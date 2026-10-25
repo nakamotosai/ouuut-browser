@@ -16,13 +16,21 @@
 
 import { ServeError } from "./errors.mjs";
 
+/** `browser_wait` 允许的三种等待目标(与 harness `page.waitFor*` 的参数逐字对齐)。 */
+export const WAIT_LOAD_STATES = Object.freeze(["domcontentloaded", "load", "networkidle"]);
+export const WAIT_SELECTOR_STATES = Object.freeze(["attached", "detached", "visible", "hidden"]);
+
+const BAD_ARGS = "OUUUT_SERVE_BAD_ARGS";
+
 /**
  * @param {object} o
  * @param {{taskSpace: Function}} o.harness 装了 SDK 之后的 harness 面(`globalThis.taskSpace` 等)
  * @param {object} o.api                     原生 api(只用来做传输层的事:列页等)
  * @param {string} [o.spaceName]             服务端用的任务空间名(CLI 那边是脚本自己起的名字)
+ * @param {object} [o.profile]               档案信息(`{sessionProfileId, profiles, archive}`),
+ *        由 `boot.mjs` 从会话层取;**没有它时 `profile()` 如实说"档案引擎不可达"**。
  */
-export function createServeCore({ harness, api, spaceName = "serve" } = {}) {
+export function createServeCore({ harness, api, spaceName = "serve", profile = null } = {}) {
   if (!harness || typeof harness.taskSpace !== "function") {
     throw new ServeError("createServeCore 需要 harness.taskSpace(装了 harness SDK 之后再调)");
   }
@@ -75,6 +83,123 @@ export function createServeCore({ harness, api, spaceName = "serve" } = {}) {
     async version() {
       const v = typeof harness.getBrowserVersion === "function" ? await harness.getBrowserVersion() : await api.getBrowserVersion();
       return { version: v?.product ?? String(v) };
+    },
+
+    /**
+     * 等页面进入某种状态。**用 harness 的页面等待 API,不轮询快照**:
+     * `waitForSelector` / `waitForFunction` / `waitForLoadState` 都在**页面侧**判定,
+     * 轮询快照会把"快照渲染"混进等待语义(慢、还会让 OOPIF 的 attach 时机变成判据)。
+     *
+     * 三者**互斥**:`selector` / `text` / `loadState` 只能给一个;都不给 = 等 `load`。
+     *
+     * @param {object} [o]
+     * @param {string} [o.selector]  CSS / harness 选择器(`css:…` 也行)
+     * @param {"attached"|"detached"|"visible"|"hidden"} [o.state] 只对 selector 有意义
+     * @param {string} [o.text]      等页面可见文本包含它
+     * @param {"domcontentloaded"|"load"|"networkidle"} [o.loadState]
+     * @param {number} [o.timeoutMs]
+     */
+    async wait({ selector, text, loadState, state, timeoutMs } = {}) {
+      const page = pages.at(-1);
+      if (!page) throw new ServeError("还没有打开的页:先 goto", "OUUUT_SERVE_NO_PAGE");
+
+      const hasSelector = typeof selector === "string" && selector !== "";
+      const hasText = typeof text === "string" && text !== "";
+      if (hasSelector && hasText) throw new ServeError("selector 与 text 只能给一个", BAD_ARGS);
+      if (loadState !== undefined && (hasSelector || hasText)) {
+        throw new ServeError("loadState 与 selector / text 只能给一个", BAD_ARGS);
+      }
+      if (state !== undefined && !hasSelector) {
+        throw new ServeError("state 只对 selector 有意义;请同时给 selector", BAD_ARGS);
+      }
+
+      const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30000;
+      const startedAt = Date.now();
+
+      if (hasSelector) {
+        if (typeof page.waitForSelector !== "function") {
+          throw new ServeError("这个 harness 的页面没有 waitForSelector", "OUUUT_SERVE_NO_WAIT");
+        }
+        const waitState = state ?? "visible";
+        if (!WAIT_SELECTOR_STATES.includes(waitState)) {
+          throw new ServeError(
+            `state=${JSON.stringify(waitState)} 不合法;只允许 ${WAIT_SELECTOR_STATES.join(" / ")}`,
+            BAD_ARGS,
+          );
+        }
+        await page.waitForSelector(selector, { timeout, state: waitState });
+        return { waitedFor: "selector", selector, state: waitState, timeoutMs: timeout, elapsedMs: Date.now() - startedAt };
+      }
+
+      if (hasText) {
+        if (typeof page.waitForFunction !== "function") {
+          throw new ServeError("这个 harness 的页面没有 waitForFunction", "OUUUT_SERVE_NO_WAIT");
+        }
+        // 字符串表达式(harness 会把它包成 `await (<expr>)`);文本走 JSON 编码,不会被引号/换行破坏。
+        const expression =
+          `(() => { const t = (document.body && document.body.innerText) || ""; ` +
+          `return t.includes(${JSON.stringify(text)}); })()`;
+        await page.waitForFunction(expression, undefined, { timeout });
+        return { waitedFor: "text", text, timeoutMs: timeout, elapsedMs: Date.now() - startedAt };
+      }
+
+      const waitState = loadState ?? "load";
+      if (!WAIT_LOAD_STATES.includes(waitState)) {
+        throw new ServeError(
+          `loadState=${JSON.stringify(waitState)} 不合法;只允许 ${WAIT_LOAD_STATES.join(" / ")}`,
+          BAD_ARGS,
+        );
+      }
+      if (typeof page.waitForLoadState !== "function") {
+        throw new ServeError("这个 harness 的页面没有 waitForLoadState", "OUUUT_SERVE_NO_WAIT");
+      }
+      await page.waitForLoadState(waitState, { timeout });
+      return { waitedFor: "loadState", loadState: waitState, timeoutMs: timeout, elapsedMs: Date.now() - startedAt };
+    },
+
+    /**
+     * 当前档案 + 档案列表。
+     *
+     * 服务端**只服务一个档案**(见 `boot.mjs` 的多档案拒绝),所以 `profileId` 就是这次会话的
+     * 主档案;`profiles` 来自会话层交出来的档案引擎(`archive.listProfiles()`)。
+     * 没给 `--profile-kind` 时会话里只有硬编码的默认档案 —— 这里**如实**返回它,
+     * 而不是编一个 kind 出来。
+     *
+     * ⚠️ **建 / 关档案没有经 MCP 暴露**:建 persona/disposable 要 `Target.createBrowserContext`,
+     * 销毁要 `Target.disposeBrowserContext`,而这两件事的生命周期归会话层
+     * (`binding/session-profiles.mjs`)所有 —— 从 MCP 单点开放会把收尾顺序(ADR-007 的
+     * "用完即弃")撕成两半。所以 `capabilities` 明说 `false`,不假装支持。
+     */
+    async profile() {
+      const archive = profile?.archive ?? null;
+      let profiles = [];
+      let archiveReachable = false;
+      if (archive && typeof archive.listProfiles === "function") {
+        profiles = archive.listProfiles().profiles ?? [];
+        archiveReachable = true;
+      } else if (Array.isArray(profile?.profiles)) {
+        profiles = profile.profiles;
+      }
+
+      const sessionProfileId = profile?.sessionProfileId ?? null;
+      const current =
+        profiles.find((p) => p.id === sessionProfileId) ??
+        (profiles.length === 1 ? profiles[0] : null);
+
+      return {
+        profileId: current?.id ?? sessionProfileId ?? "default",
+        kind: current?.kind ?? null,
+        isDefault: Boolean(current?.isDefault),
+        archiveReachable,
+        profiles,
+        capabilities: {
+          create: false,
+          close: false,
+          reason:
+            "档案的 browser context 生命周期归会话层(session-profiles);经 MCP 建/关会撕开收尾顺序," +
+            "属侵入式改动,未做。要多种档案请用 CLI 的 --profile-kind / --profiles。",
+        },
+      };
     },
   };
 }

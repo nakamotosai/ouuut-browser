@@ -270,7 +270,20 @@ test("★ MCP:initialize / tools/list / tools/call 的形状(以及通知**不�
   assert.equal(await handleMcpMessage(core, { jsonrpc: "2.0", method: "notifications/initialized" }), null, "通知必须不回");
 
   const list = await handleMcpMessage(core, { jsonrpc: "2.0", id: 2, method: "tools/list" });
-  assert.deepEqual(list.result.tools.map((t) => t.name), ["browser_goto", "browser_snapshot", "browser_tabs", "browser_version"]);
+  assert.deepEqual(list.result.tools.map((t) => t.name), [
+    "browser_goto",
+    "browser_snapshot",
+    "browser_tabs",
+    "browser_version",
+    "browser_batch",
+    "browser_wait",
+    "browser_profile",
+  ]);
+  // 原有 4 个工具的参数形状**不许**变(只加新工具,不改旧的)
+  const byName = Object.fromEntries(list.result.tools.map((t) => [t.name, t]));
+  assert.deepEqual(byName.browser_goto.inputSchema.required, ["url"]);
+  assert.deepEqual(byName.browser_snapshot.inputSchema.properties, { maxResultLength: { type: "number" } });
+  assert.deepEqual(byName.browser_batch.inputSchema.required, ["steps"]);
 
   const call = await handleMcpMessage(core, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "browser_snapshot", arguments: {} } });
   assert.equal(call.result.content[0].type, "text");

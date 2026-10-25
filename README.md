@@ -64,7 +64,14 @@ node native/bin/ouuut-serve.mjs --headless [--port 8788]
 
 # 3) MCP stdio:给 agent 宿主用(JSON-RPC over stdio;stdout 只走协议)
 node native/bin/ouuut-mcp.mjs --headless
-#   工具:browser_goto / browser_snapshot / browser_tabs / browser_version
+#   工具:browser_goto / browser_snapshot / browser_tabs / browser_version /
+#         browser_batch / browser_wait / browser_profile
+#   browser_batch = 一串步骤(goto/snapshot/tabs/version/wait)按序跑,首错即停(continueOnError 可继续)
+#   browser_wait  = 等加载状态 / CSS 选择器 / 可见文本(走 harness 的页面等待 API,不轮询快照)
+#   browser_profile = 当前档案 id/kind + 档案列表;经 MCP 建/关档案未开放(如实标 false)
+#   轨迹:每次 tools/call 追加一行到 runs/<sessionId>/trajectory.jsonl,快照正文另存 snapshots/;
+#         默认根目录是系统临时目录(OUUUT_MCP_RUNS_DIR 可改),仓库里的 /runs/ 已 gitignore
+node tools/verify-mcp-session.mjs --headless [--profile-kind persona]   # 真链路冒烟(协议 + 轨迹)
 ```
 
 ⚠️ 服务端驱动的是**带身份的真浏览器**:默认只绑 loopback、必须带令牌;`--no-auth` 只在 loopback 下允许。
