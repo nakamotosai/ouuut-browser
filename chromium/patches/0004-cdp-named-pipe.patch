@@ -1,5 +1,5 @@
 diff --git a/content/browser/devtools/devtools_agent_host_impl.cc b/content/browser/devtools/devtools_agent_host_impl.cc
-index 44ffa91fca..f58d5832dc 100644
+index 44ffa91fca..a919e72c91 100644
 --- a/content/browser/devtools/devtools_agent_host_impl.cc
 +++ b/content/browser/devtools/devtools_agent_host_impl.cc
 @@ -16,6 +16,7 @@
@@ -30,7 +30,7 @@ index 44ffa91fca..f58d5832dc 100644
  int AdoptHandle(const std::string& serialized_pipe, int flags) {
    // Deserialize the handle.
    // We use the fact that inherited handles in the child process have the same
-@@ -95,11 +109,26 @@ int AdoptHandle(const std::string& serialized_pipe, int flags) {
+@@ -95,15 +109,41 @@ int AdoptHandle(const std::string& serialized_pipe, int flags) {
    // See:
    // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa
    uint32_t handle_as_uint32;
@@ -42,10 +42,15 @@ index 44ffa91fca..f58d5832dc 100644
 +    handle = base::win::Uint32ToHandle(handle_as_uint32);
 +  } else {
 +    // ouuut: 不是数字 → 当命名管道路径处理。
++    //
++    // **必须带 FILE_FLAG_OVERLAPPED**:Chromium 的 DevToolsPipeHandler 走的是
++    // 异步读(`base::FileDescriptorWatcher`),而它在 Windows 上要求重叠句柄。
++    // 用同步句柄开出来的管道**不报错、不退出、只是永远不响应** ——
++    // 这个失败模式比崩溃难查得多(2026-10-25 实测:管道连上了、写进去了、零回应)。
 +    const DWORD access = (flags == _O_RDONLY) ? GENERIC_READ : GENERIC_WRITE;
 +    handle = ::CreateFileW(base::UTF8ToWide(serialized_pipe).c_str(), access,
 +                           /*dwShareMode=*/0, /*lpSecurityAttributes=*/nullptr,
-+                           OPEN_EXISTING, /*dwFlagsAndAttributes=*/0,
++                           OPEN_EXISTING, /*dwFlagsAndAttributes=*/FILE_FLAG_OVERLAPPED,
 +                           /*hTemplateFile=*/nullptr);
 +    if (handle == INVALID_HANDLE_VALUE) {
 +      return -1;
@@ -60,3 +65,14 @@ index 44ffa91fca..f58d5832dc 100644
      return -1;
    }
    // Map the handle to the file descriptor
+-  return _open_osfhandle(reinterpret_cast<intptr_t>(handle), flags);
++  int fd = _open_osfhandle(reinterpret_cast<intptr_t>(handle), flags);
++  // ouuut: 把采用结果打出来 —— 管道连上了却"没回应"时,这一行能立刻分出是
++  // 「fd 没拿到」还是「拿到了但读不到」。
++  fprintf(stderr, "ouuut: AdoptHandle path=%s flags=%d handle=%p fd=%d opened_by_us=%d\n",
++          serialized_pipe.c_str(), flags, handle, fd, opened_by_us ? 1 : 0);
++  fflush(stderr);
++  return fd;
+ }
+ 
+ // Transform the --remote-debugging-io-pipes switch value to file descriptors.
