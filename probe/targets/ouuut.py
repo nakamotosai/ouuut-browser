@@ -235,7 +235,9 @@ def launch(spec: LaunchSpec) -> Iterator[OuUutFacade]:
         yield facade
     finally:
         facade.close()
-        for f in (cmdlog, reslog, logfile, driver):
+        # ⚠️ **日志不删** —— 出问题时那份 log 是唯一的现场(它是 gitignore 的目录,很小)。
+        # 命令/结果/驱动脚本才是每次一份、没有留存价值的,删掉。
+        for f in (cmdlog, reslog, driver):
             f.unlink(missing_ok=True)
 
 
