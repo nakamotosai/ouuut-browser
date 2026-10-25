@@ -100,11 +100,23 @@ while (!stopping) {
 class OuUutFacade:
     """把长驻 CLI 进程门面化成一个有状态的浏览器门面。"""
 
-    def __init__(self, proc: subprocess.Popen, cmdlog: Path, reslog: Path, logfile: Path, name: str, timeout: int):
+    def __init__(
+        self,
+        proc: subprocess.Popen,
+        cmdlog: Path,
+        reslog: Path,
+        logfile: Path,
+        out_dir: Path,
+        name: str,
+        timeout: int,
+    ):
         self.proc = proc
         self.cmdlog = cmdlog
         self.reslog = reslog
         self.logfile = logfile
+        # 截图要落在**本次 run 的目录**里(`probe/out/<run>/screenshots/`)——
+        # 与其它 target 一致;放临时目录的话,证据就跟 run 分家了。
+        self.out_dir = out_dir
         self.name = name
         self.timeout = timeout
         self._offset = 0
@@ -179,7 +191,9 @@ class OuUutFacade:
         return bool(self._call(op="has", selector=selector))
 
     def screenshot(self, name: str) -> str:
-        path = SCRIPT_DIR / f"{name}-{os.getpid()}-{id(self)}.png"
+        shot_dir = self.out_dir / "screenshots"
+        shot_dir.mkdir(parents=True, exist_ok=True)
+        path = shot_dir / f"{name}-{os.getpid()}-{id(self)}.png"
         self._call(op="screenshot", path=str(path))
         return str(path)
 
@@ -230,7 +244,7 @@ def launch(spec: LaunchSpec) -> Iterator[OuUutFacade]:
             stdout=logfh,
             stderr=subprocess.STDOUT,
         )
-    facade = OuUutFacade(proc, cmdlog, reslog, logfile, "ouuut", max(30, spec.timeout_ms // 1000))
+    facade = OuUutFacade(proc, cmdlog, reslog, logfile, Path(spec.out_dir), "ouuut", max(30, spec.timeout_ms // 1000))
     try:
         yield facade
     finally:
