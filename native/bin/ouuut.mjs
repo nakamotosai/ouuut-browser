@@ -50,7 +50,7 @@ import { parseArgs, buildBrowserArgs, USAGE } from "./launch-args.mjs";
  */
 export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.argv.slice(2), env = process.env } = {}) {
   const opts = parseArgs(argv);
-  const session = await openSession({ opts, env, spawn, browser: buildBrowserArgs(opts, env) });
+  const session = await openSession({ opts, env, spawn, buildArgs: (o) => buildBrowserArgs(o, env) });
   try {
     return await run({ api: session.api, registry: session.registry, cdp: session.cdp, options: opts });
   } finally {

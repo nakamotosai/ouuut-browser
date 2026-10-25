@@ -52,7 +52,7 @@ export async function bootServeCore({ argv = [], env = process.env, spawn } = {}
     env,
     spawn,
     installGlobal: true, // harness 的 SDK 要能从 globalThis 拿到我们的 api
-    browser: buildBrowserArgs(opts, env),
+    buildArgs: (o) => buildBrowserArgs(o, env),
   });
 
   try {

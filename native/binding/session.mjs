@@ -11,6 +11,8 @@
 // 那个 disposable 档案就留在磁盘上 —— 与 ADR-007「用完即弃」自相矛盾。
 
 import { spawnCdpPipe } from "./cdp-pipe.mjs";
+import { parseProxy } from "./proxy.mjs";
+import { startEgressGuard } from "./egress-guard.mjs";
 import { createTaskSpaceRegistry } from "./task-spaces.mjs";
 import { openSessionProfiles } from "./session-profiles.mjs";
 import { createOuUutRuntime } from "./ouuut-runtime.mjs";
@@ -24,8 +26,9 @@ import { createOuUutRuntime } from "./ouuut-runtime.mjs";
  * @param {Function} [o.spawn]   默认 `spawnCdpPipe`;测试可注入假对端
  * @param {Function} [o.beforeClose] 收尾**第一步**(CLI 用它摘 harness 回调)
  * @param {boolean} [o.installGlobal] 是否把 api 装到 `globalThis.<namespace>`(CLI 需要,服务端不需要)
- * @param {{ exe: string, args: string[], userDataDir: string, ephemeralUserDataDir: boolean } } o.browser
- *        `buildBrowserArgs()` 的结果 —— 由调用方算好,免得本模块又去认一遍 CLI 参数
+ * @param {Function} o.buildArgs  `(opts) => buildBrowserArgs(opts, env)` —— **必须由调用方传**:
+ *        本模块要按"有没有出口闸"改写 `opts.proxy` 之后**再**算启动参数,
+ *        否则浏览器会绕过闸直连上游(2026-10-26 实测踩到:先算好参数再改 opts,等于没改)。
  * @returns {Promise<{api: object, registry: object, cdp: object, session: object, close: Function}>}
  */
 export async function openSession({
@@ -34,12 +37,45 @@ export async function openSession({
   spawn = spawnCdpPipe,
   beforeClose = null,
   installGlobal = true,
-  browser,
+  buildArgs,
 } = {}) {
-  if (!browser || !browser.exe || !Array.isArray(browser.args)) {
-    throw new TypeError("openSession 需要 browser = buildBrowserArgs(opts, env) 的结果");
+  if (typeof buildArgs !== "function") {
+    throw new TypeError("openSession 需要 buildArgs = (opts) => buildBrowserArgs(opts, env)");
   }
-  const { exe, args, userDataDir, ephemeralUserDataDir } = browser;
+
+  // ---- 出口闸(有代理时)------------------------------------------------------
+  // 为什么需要:浏览器自己的回连在**直连**下能被解析层规则挡住,但走代理时域名交给代理去解
+  // (Chrome 的 socks5:// 就是远端解析),解析层管不着。⇒ 让浏览器先连**我们的闸**,
+  // 闸命中回连名单就直接拒(不查 DNS、不出网),其余原样转发给真上游。
+  // 只对 **socks5 上游**生效:闸的上游那一半只会说 SOCKS5(别的 scheme 就跳过并说明)。
+  let guard = null;
+  let effectiveOpts = opts;
+  if (opts.proxy && !opts.allowPhoneHome) {
+    let upstream = null;
+    try {
+      const parsed = parseProxy(opts.proxy);
+      if (parsed && (parsed.scheme === "socks5" || parsed.scheme === "socks5h")) {
+        upstream = { host: parsed.host, port: parsed.port };
+      }
+    } catch {
+      /* 代理串本身会在后面被校验报错,这里不抢它的活 */
+    }
+    if (upstream) {
+      guard = await startEgressGuard({ upstream });
+      effectiveOpts = { ...opts, proxy: guard.url };
+      process.stderr.write(
+        `[ouuut] 出口闸已启用:${guard.url} → 上游 ${upstream.host}:${upstream.port}` +
+          "(回连名单在转发前就被拒;要放开加 --allow-phone-home)\n",
+      );
+    } else if (opts.proxy) {
+      process.stderr.write(
+        "[ouuut] 出口闸未启用:上游不是 socks5(闸的上游只会说 SOCKS5)—— 回连名单这道闸这次不生效\n",
+      );
+    }
+  }
+
+  // ⚠️ 启动参数必须在**闸决定之后**才算(否则浏览器会绕过闸直连上游)
+  const { exe, args, userDataDir, ephemeralUserDataDir } = buildArgs(effectiveOpts);
 
   const cdp = spawn({
     exe,
@@ -62,12 +98,16 @@ export async function openSession({
       // ⚠️ `real` **不能**传进来 —— 它用默认 context,挂不了 context 级代理,而它的出口已经由
       // 浏览器级 `--proxy-server` 承担(见 launch-args 的按 kind 分流);传进来只会被档案层抛死,
       // 于是出现"参数合法、会话起不来"的自相矛盾(2026-10-25 核验指出的 F3)。
-      proxy: opts.profileKind === "persona" || opts.profileKind === "disposable" ? opts.proxy : null,
+      proxy:
+        effectiveOpts.profileKind === "persona" || effectiveOpts.profileKind === "disposable"
+          ? effectiveOpts.proxy
+          : null,
       // 额外档案(双档案双出口):各带自己的 context ⇒ 各带自己的出口。
       extraProfiles: Array.isArray(opts.extraProfiles) ? opts.extraProfiles : [],
     });
   } catch (err) {
     await cdp.close();
+    await guard?.close();
     throw err;
   }
 
@@ -106,6 +146,7 @@ export async function openSession({
           else globalThis[n] = before;
         }
         await cdp.close();
+        await guard?.close();
         // **用完即弃**:会话专用的临时档案目录不该留在磁盘上。
         // 顺序:必须在 `cdp.close()` **之后** —— 浏览器还在跑时删它的档案目录是白删/半删。
         if (ephemeralUserDataDir) await removeSessionUserDataDir(userDataDir, opts.namespace);

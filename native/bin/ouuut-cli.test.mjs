@@ -342,10 +342,12 @@ test("★ real + --proxy:能起会话,且出口走浏览器级(档案层收不�
       stdout: { write() {} },
     });
     assert.equal(rc, 0, "real + --proxy 必须能起会话(此前被库层抛死)");
-    assert.ok(
-      captured.args.some((a) => a.startsWith("--proxy-server=socks5://127.0.0.1:1080")),
-      `real 的出口必须走浏览器级:${captured.args.join(" ")}`,
-    );
+    // 出口走浏览器级 —— 但现在浏览器级指向的是**出口闸**(本地 socks5),
+    // 闸再把连接转发给用户给的 127.0.0.1:1080(所以这里断言"是 loopback 的 socks5 且不是 1080 本身")。
+    const proxyArg = captured.args.find((a) => a.startsWith("--proxy-server="));
+    assert.ok(proxyArg, `real 的出口必须走浏览器级:${captured.args.join(" ")}`);
+    assert.match(proxyArg, /^--proxy-server=socks5:\/\/127\.0\.0\.1:\d+$/, `应当是本地闸:${proxyArg}`);
+    assert.ok(!proxyArg.endsWith(":1080"), "浏览器不该直连用户的代理(那样回连名单那道闸就绕过去了)");
     assert.ok(
       !seen.some((c) => c.method === "Target.createBrowserContext"),
       "real 不建 context(也就不会碰 context 级代理)",
