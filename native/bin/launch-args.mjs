@@ -13,7 +13,7 @@
 //   | `ipcFloodingProtection` | **不加** `--disable-ipc-flooding-protection` |
 //   | `popupBlocking` | **不加** `--disable-popup-blocking` |
 //   | `storagePartitioning` | 用自己的 `--disable-features=`,**不含** `ThirdPartyStoragePartitioning` |
-//   | `viewport` | 用真实屏幕,不用 1280×720 默认 |
+//   | `viewport` | **有头**用真实屏幕(不用 1280×720 默认);**无头**显式给 `--screen-info` + `--window-size`(坑-37) |
 //   | WebRTC | 抑制非代理 UDP(ADR-014) |
 //   | WebGL | **不加** `--enable-unsafe-swiftshader`(Playwright 无头时会自动加) |
 
