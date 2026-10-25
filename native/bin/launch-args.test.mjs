@@ -58,13 +58,14 @@ test("非法 kind → 报错,并列出合法值", () => {
 test("★ 无头下只给尺寸、不给位置(原断言「一条窗口参数都不给」已被真机证伪)", () => {
   // 这条**原先**断言无头下 `win` 必须为空、理由是"没有窗口可摆,给了只是噪音"。
   // 2026-10-25 真机把它证伪了:headless 默认 800×600,检测站直接点名,
-  // 所以"什么都不给"本身就是一个可指纹化的常数(见坑-35 同族的「文档说没事、真机说有事」)。
+  // 所以"什么都不给"本身就是一个可指纹化的常数(见坑-37)。
+  const SCREEN = `--screen-info={${DEFAULT_HEADLESS_SCREEN.replace(",", "x")} isInternal=false workAreaBottom=48}`;
   {
     const { args } = plan(["--headless"]);
     assert.deepEqual(
       args.filter((a) => WINDOW_ARGS.test(a)),
-      [`--window-size=${DEFAULT_HEADLESS_SCREEN}`, `--screen-info={${DEFAULT_HEADLESS_SCREEN.replace(",", "x")}}`],
-      "无头:给窗口尺寸 + 屏幕尺寸(后者才是 screen.* 看到的那个),但不给位置",
+      ["--window-size=1880,1000", SCREEN],
+      "无头:给窗口尺寸(比屏小一圈)+ 屏幕尺寸,但不给位置",
     );
   }
   {
@@ -78,23 +79,29 @@ test("★ 无头下只给尺寸、不给位置(原断言「一条窗口参数都
     // 显式给的尺寸必须听 —— 此前无头会把它静默丢掉
     const { args } = plan(["--headless", "--window-size", "1380,960"]);
     const win = args.filter((a) => WINDOW_ARGS.test(a));
-    assert.deepEqual(win, ["--window-size=1380,960", "--screen-info={1380x960}"]);
+    assert.deepEqual(win, ["--window-size=1380,960", SCREEN], "窗口听调用方的;屏幕仍装得下它");
   }
 });
 
-test("★ 无头必须给尺寸:不给就是 800×600,而那是可指纹化的常数", () => {
-  // 2026-10-25 真机:headless 默认 800×600,检测站直接点名
-  // 「🟡 Screen is 800x600, the default screen size of headless Chrome」。
-  const args = plan(["--headless"]).args;
-  assert.ok(
-    args.includes(`--window-size=${DEFAULT_HEADLESS_SCREEN}`),
-    "无头下要给一个常见桌面尺寸,而不是让 Chrome 用 800×600 默认值",
-  );
-  assert.ok(
-    !args.some((a) => a.startsWith("--window-position")),
-    "无头没有窗口可摆,位置仍然不给",
-  );
-  assert.ok(!args.includes("--start-maximized"), "无头不给 --start-maximized");
+test("★ 有头**不许**带 --screen-info/--window-size(否则几何这一维就没约束了)", () => {
+  // 核验者用突变实验指出:`WINDOW_ARGS` 正则放宽后,有头分支若混进 `--screen-info`
+  // 不会被任何断言抓到("同一档案"那条会把两边一起剥掉)。这里补一条负断言。
+  const { args } = plan([]);
+  assert.ok(!args.some((a) => a.startsWith("--screen-info")), "有头走真实屏幕,不该给 --screen-info");
+  assert.ok(!args.some((a) => a.startsWith("--window-size")), "没给尺寸时就该 --start-maximized");
+  assert.ok(args.includes("--start-maximized"));
+});
+
+test("★ 畸形的 --window-size 不许造出畸形 --screen-info(会静默退回 800×600)", () => {
+  // 第一版用 `String(size).split(",")` 取两段 —— `1920`、`1920x1080`、`"1920, "` 都会拼出
+  // `{1920xundefined}`,而 Chrome **不报错**、悄悄用回 800×600,正好把修好的 1 黄带回来。
+  for (const bad of ["1920", "1920x1080", "1920, ", "", "  ,  "]) {
+    const { args } = plan(["--headless", "--window-size", bad]);
+    const si = args.find((a) => a.startsWith("--screen-info="));
+    assert.ok(si, `${JSON.stringify(bad)}:仍然要给 screen-info`);
+    assert.ok(!/undefined|NaN/.test(si), `${JSON.stringify(bad)} 造出了 ${si}`);
+    assert.match(si, /^\-\-screen-info=\{\d+x\d+ /, `${JSON.stringify(bad)} 的 screen-info 形状不对:${si}`);
+  }
 });
 
 test("★ 无头下用户显式给的尺寸要**听**(此前被丢掉,那是 bug)", () => {

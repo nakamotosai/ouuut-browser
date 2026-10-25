@@ -62,14 +62,44 @@ export const FORBIDDEN_ARGS = [
 ];
 
 /**
- * 无头模式下的默认屏幕尺寸。
+ * 无头模式下的默认屏幕尺寸;窗口尺寸由它派生(见 `headlessGeometry`)。
  *
- * 为什么不"什么都不给":headless 的默认是 **800×600**,而检测站会直接把它点出来
- * (`Screen is 800x600, the default screen size of headless Chrome`)——
- * 那是**可指纹化的常数**,不是"无害的默认"(2026-10-25 真机实测)。
- * 1920×1080 是最常见的桌面分辨率;真正的"按画像给"要等 F5 的 seed 画像接进启动参数。
+ * ⚠️ **这是个固定常数,本身也可被指纹化** —— 1920×1080 + `dpr 1.0`(Chromium 默认)+ 24 位色深,
+ * 每个实例都一样。它之所以还是比原来的 800×600 好,是因为 800×600 是**headless 的出厂默认值**、
+ * 被检测站点名;而 1920×1080 至少是常见桌面分辨率。
+ * **真正的"按画像给自洽尺寸"要等 F5 的 seed 画像接进启动参数**(那时屏/DPR/色彩深度一起由画像决定)。
  */
 export const DEFAULT_HEADLESS_SCREEN = "1920,1080";
+
+/** 解析 `W,H`。非法一律返回 `null` —— **绝不允许**它变成 `{1920xundefined}`(见坑-37 的新错)。 */
+function parseSize(v) {
+  const m = /^\s*(\d{1,5})\s*,\s*(\d{1,5})\s*$/.exec(String(v ?? ""));
+  return m ? { w: Number(m[1]), h: Number(m[2]) } : null;
+}
+
+/**
+ * 无头下的"屏幕 + 窗口"这一对,必须**算术自洽**:
+ *   * 窗口要比屏幕小(真桌面上普通窗口不会正好等于整屏),
+ *     否则 `screenX + outerWidth > screen.availWidth`(窗口探出屏外);
+ *   * 留出任务栏(`workAreaBottom`)—— 真桌面上 `availHeight < screen.height`。
+ *
+ * 2026-10-25:这两条都是核验者用 `p.evaluate` 直读 `window`/`screen` 抓出来的破绽
+ * (第一版给的是"窗口 == 屏幕、没有任务栏")。
+ */
+function headlessGeometry(userSize) {
+  const want = parseSize(userSize);
+  const base = { w: 1920, h: 1080 };
+  // 用户显式给的窗口必须装得下 ⇒ 屏幕按需要长大(默认屏通常已经够大)
+  const screen = want
+    ? { w: Math.max(base.w, want.w + 40), h: Math.max(base.h, want.h + 80) }
+    : base;
+  const window_ = want ?? { w: screen.w - 40, h: screen.h - 80 };
+  return {
+    windowSize: `${window_.w},${window_.h}`,
+    // 只给窗口不够:screen 由 --screen-info 定义(它是 switch,不是 screen.* 的别名)
+    screenInfo: `{${screen.w}x${screen.h} isInternal=false workAreaBottom=48}`,
+  };
+}
 
 const DEFAULT_FEATURES_TO_DISABLE = [
   // 注意:**不含** ThirdPartyStoragePartitioning(docs/补丁点位.md §三 明确要求)
@@ -227,8 +257,8 @@ export function buildBrowserArgs(opts = {}, env = {}) {
 
   // 无头的"窗口尺寸 / 屏幕尺寸"是同一件事的两个开关:`--window-size=W,H` 与 `--screen-info={WxH}`
   // (后者才是 `screen.*` 看到的那个;格式用 `x` 不用 `,`)。
-  const headlessSize = winSize ?? DEFAULT_HEADLESS_SCREEN;
-  const [headlessW, headlessH] = String(headlessSize).split(",");
+  // **两者都必须来自解析过的值** —— 畸形的 `--screen-info` 会被 Chrome 静默忽略、退回 800×600。
+  const headless = headlessGeometry(winSize);
 
   const args = [
     // ---- 通道:不监听任何 TCP 端口 ----
@@ -264,12 +294,12 @@ export function buildBrowserArgs(opts = {}, env = {}) {
     //   * `--window-position` 仍不给:没有窗口可摆。
     ...(opts.headless
       ? [
-          `--window-size=${headlessSize}`,
-          // **只给 --window-size 不够**:它改的是窗口,`screen.width/height` 仍然是 800×600
+          `--window-size=${headless.windowSize}`,
+          // **只给 --window-size 不够**:它改的是窗口,`screen.width/height` 仍是 800×600
           // (2026-10-25 真机:加了 window-size 之后检测站**照样**报 800×600)。
-          // headless 定义"屏幕"用的是 `--screen-info`(格式见 Chromium 自己的用例:
-          // `headless/test/data/protocol/sanity/screen-rotation-*`: `--screen-info={800x600}`)。
-          `--screen-info={${headlessW}x${headlessH}}`,
+          // headless 定义"屏幕"用的是 `--screen-info`(格式见 Chromium 自己的文档/用例:
+          // `components/headless/screen_info/README.md`、`headless/test/data/protocol/sanity/`)。
+          `--screen-info=${headless.screenInfo}`,
         ]
       : winPos || winSize
         ? [
