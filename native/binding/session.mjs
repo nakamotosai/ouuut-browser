@@ -13,6 +13,7 @@
 import { spawnCdpPipe } from "./cdp-pipe.mjs";
 import { parseProxy } from "./proxy.mjs";
 import { startEgressGuard } from "./egress-guard.mjs";
+import { PoolError, openPool } from "./rotation.mjs";
 import { createTaskSpaceRegistry } from "./task-spaces.mjs";
 import { openSessionProfiles } from "./session-profiles.mjs";
 import { createOuUutRuntime } from "./ouuut-runtime.mjs";
@@ -74,6 +75,65 @@ export async function openSession({
     }
   }
 
+  // ---- 出口租约(P3 的「轮换」)------------------------------------------------
+  // 租约单位 = **这次会话**(见 rotation.mjs 头部):领到就绑住,会话中途**绝不**换出口。
+  // 「显式 > 池」:会话级 `--proxy` 或额外档案自己带的 `proxy` 说了算,池只补**没给**的那些。
+  // 领不到就抛(PoolError)⇒ 会话根本起不来,绝不静默直连(坑-40、坑-28)。
+  let poolHandle = null;
+  const poolAssignments = [];
+  let extraProfiles = Array.isArray(opts.extraProfiles) ? opts.extraProfiles : [];
+  const note = (where, a) => {
+    process.stderr.write(
+      `[ouuut] 出口租约:${where} → 节点 ${a.node.id}(${a.node.redacted})` +
+        (a.reused ? " ⚠️ 复用了别人在用的节点(已打破独占)" : "") +
+        "\n",
+    );
+  };
+  if (opts.proxyPool) {
+    // context 级代理只挂得上 persona/disposable(`real` 用默认 context,见 session-profiles.mjs)。
+    const canCarry = (k) => k === "persona" || k === "disposable";
+    poolHandle = await openPool({ file: opts.proxyPool });
+    // 先把"谁要领节点"列全,再**一次**领完 —— 两个档案的分配互相牵制(独占),
+    // 分开领会留下"A 领到了、B 失败"的半场租约(那半场还得等进程死掉才回收)。
+    const requests = [];
+    if (opts.profileKind && !effectiveOpts.proxy) {
+      requests.push({ profileId: opts.profileKind, kind: opts.profileKind });
+    }
+    for (const prof of extraProfiles) {
+      if (prof.proxy) continue; // 「显式 > 池」:自己写了出口的档案,池不动它
+      if (!canCarry(prof.kind)) {
+        throw new PoolError(
+          `--profiles 里档案 ${prof.id ?? prof.kind}(kind=${prof.kind})挂不了 context 级代理 ⇒ 拒绝启动:` +
+            "要给它出口,请显式写 proxy;池只负责 persona/disposable。",
+          "OUUUT_POOL_KIND_UNSUPPORTED",
+        );
+      }
+      requests.push({ profileId: prof.id ?? prof.kind, kind: prof.kind });
+    }
+    if (requests.length === 0) {
+      const hasProfiles = Boolean(opts.profileKind) || extraProfiles.length > 0;
+      throw new PoolError(
+        hasProfiles
+          ? "--proxy-pool 给了池,但这次会话的档案全都显式写了出口 ⇒ 池没活干,拒绝启动:别把两套出口来源都摆上来。"
+          : "--proxy-pool 给了池,但这次会话一个档案都没有 ⇒ 拒绝启动:池是给档案绑出口用的,请给 --profile-kind 或 --profiles。",
+        "OUUUT_POOL_NOTHING_TO_BIND",
+      );
+    }
+    const granted = await poolHandle.assignMany({ requests, reuse: Boolean(opts.poolReuse) });
+    const byProfile = new Map(granted.map((g) => [g.lease.profileId, g]));
+    for (const g of granted) {
+      poolAssignments.push({ profileId: g.lease.profileId, nodeId: g.node.id, reused: Boolean(g.reused) });
+      note(`档案 ${g.lease.profileId}`, g);
+    }
+    if (opts.profileKind && byProfile.has(opts.profileKind)) {
+      effectiveOpts = { ...effectiveOpts, proxy: byProfile.get(opts.profileKind).node.proxy };
+    }
+    extraProfiles = extraProfiles.map((prof) => {
+      const g = byProfile.get(prof.id ?? prof.kind);
+      return g ? { ...prof, proxy: g.node.proxy } : prof;
+    });
+  }
+
   // ⚠️ 启动参数必须在**闸决定之后**才算(否则浏览器会绕过闸直连上游)
   const { exe, args, userDataDir, ephemeralUserDataDir } = buildArgs(effectiveOpts);
 
@@ -103,7 +163,7 @@ export async function openSession({
           ? effectiveOpts.proxy
           : null,
       // 额外档案(双档案双出口):各带自己的 context ⇒ 各带自己的出口。
-      extraProfiles: Array.isArray(opts.extraProfiles) ? opts.extraProfiles : [],
+      extraProfiles,
     });
   } catch (err) {
     await cdp.close();
@@ -147,6 +207,10 @@ export async function openSession({
         }
         await cdp.close();
         await guard?.close();
+        // 租约:**成败都还** —— 不然崩一次就把节点占死到"进程没了"才回收。
+        if (poolHandle) {
+          for (const a of poolAssignments) await poolHandle.release({ profileId: a.profileId });
+        }
         // **用完即弃**:会话专用的临时档案目录不该留在磁盘上。
         // 顺序:必须在 `cdp.close()` **之后** —— 浏览器还在跑时删它的档案目录是白删/半删。
         if (ephemeralUserDataDir) await removeSessionUserDataDir(userDataDir, opts.namespace);
@@ -155,7 +219,15 @@ export async function openSession({
     return true;
   };
 
-  return { api: runtime.api, registry, cdp, session, close };
+  return {
+    api: runtime.api,
+    registry,
+    cdp,
+    session,
+    close,
+    // 给调用方(CLI)的把手:出口量不到时把那条节点隔离掉,下次分配自动跳过。
+    pool: poolHandle ? { handle: poolHandle, assignments: poolAssignments } : null,
+  };
 }
 
 /** `openSession()` 的 try/finally 形式 —— 想要"跑一段就用完收掉"时用这个。 */

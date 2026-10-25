@@ -52,7 +52,7 @@ export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.ar
   const opts = parseArgs(argv);
   const session = await openSession({ opts, env, spawn, buildArgs: (o) => buildBrowserArgs(o, env) });
   try {
-    return await run({ api: session.api, registry: session.registry, cdp: session.cdp, options: opts });
+    return await run({ api: session.api, registry: session.registry, cdp: session.cdp, options: opts, session });
   } finally {
     await session.close();
   }
@@ -135,12 +135,21 @@ export async function cli({
     argv,
     spawn,
     env,
-    async run({ api, registry, options }) {
+    async run({ api, registry, options, session }) {
       if (typeof runScript === "function") return runScript({ api, registry, options });
 
       // ---- 出口一致性闸(F6 / P4):**在脚本跑之前** ----
       // 为什么在这里而不是起浏览器之前:量出口要过一个真实的网络出口(我们只有浏览器这条现成通道),
       // 而"拒绝启动"的效果一样 —— 脚本一行都还没跑,目标站一次都没碰。
+      // 出口量不到 ⇒ 这条节点**隔离**(带证据),下次分配就跳过它。
+      // 注意:身份**不一致**不隔离 —— 那条节点没坏,只是不适合这个画像(P4 的两种失败要分清)。
+      const quarantine = async (reason, evidence) => {
+        const a = session?.pool?.assignments?.find((x) => x.profileId === opts.profileKind);
+        if (!a) return;
+        await session.pool.handle.markDead({ nodeId: a.nodeId, reason, evidence });
+        process.stderr.write(`[ouuut] 节点 ${a.nodeId} 已隔离(下次分配会跳过它)\n`);
+      };
+
       if (opts.identityCountry || opts.egressCountry) {
         let measuredIp;
         try {
@@ -152,6 +161,7 @@ export async function cli({
             `[ouuut] 出口核对未完成(${err?.error_code ?? "?"}):${err?.message ?? err}\n` +
               "        这一趟**没验过出口**;要严格禁止这种情况,请修好出口端点后重试。\n",
           );
+          await quarantine("出口量不到", err?.message ?? err);
           return 2;
         }
         let verdict;
@@ -198,6 +208,12 @@ if (isDirect) {
   cli()
     .then((code) => process.exit(code))
     .catch((err) => {
+      // **设计好的拒绝**(池里没节点、旋转端点不许入池这类)不是"事故":打人话、不打堆栈,
+      // 退出码按"拒绝启动"给 2(与 P4 出口闸一致)。其它异常照旧打堆栈 —— 那是要查的 bug。
+      if (err?.name === "PoolError") {
+        process.stderr.write(`[ouuut] ${err.message}\n`);
+        process.exit(2);
+      }
       process.stderr.write(`[ouuut] ${err?.stack ?? err}\n`);
       process.exit(1);
     });

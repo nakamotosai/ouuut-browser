@@ -22,6 +22,9 @@ import path from "node:path";
 import { PROXY_BYPASS_LIST, assertProxyUsable } from "../binding/proxy.mjs";
 import { resolveBrowserExe } from "../binding/paths.mjs";
 import os from "node:os";
+import { readFileSync } from "node:fs";
+
+import { parsePool } from "../binding/rotation.mjs";
 
 // 三种档案的**唯一来源**是档案引擎 —— 另抄一份迟早会漂(F3 的 kind 就是那三个)
 import { KINDS as PROFILE_KINDS } from "../binding/archive.mjs";
@@ -217,6 +220,24 @@ export function parseArgs(argv = []) {
         out.proxy = v;
         break;
       }
+      case "--proxy-pool": {
+        // 出口节点的**租约表**(P3 的「轮换」):一池固定出口,按档案领、会话结束还。
+        // 这里只做"读得动 + 合法规格"的**早期**校验 —— 起浏览器之前就该失败(别等会话起来了才报)。
+        const v = next();
+        if (v === null) return out;
+        try {
+          parsePool(JSON.parse(readFileSync(v, "utf8")));
+        } catch (err) {
+          out.error = `--proxy-pool 读不动或规格不合法(${v}):${err?.message ?? err}`;
+          return out;
+        }
+        out.proxyPool = v;
+        break;
+      }
+      case "--pool-reuse":
+        // 显式打破"独占":没空闲节点时复用最久没被动的节点(会打破两个身份不共出口的保证,诊断里标出来)
+        out.poolReuse = true;
+        break;
       case "--identity-country": {
         const v = next(); if (v === null) return out;
         out.identityCountry = v;
