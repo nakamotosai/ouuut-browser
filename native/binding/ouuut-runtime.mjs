@@ -293,6 +293,9 @@ export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profile
       );
     }
     let header;
+    // 快照要拍**用户正在看的那个标签页**。`Target.getTargets` 里第一个 page
+    // 常常是启动时就有的 `chrome://newtab/` —— 拍它会拍到一张空标签页。
+    let activeTargetId = null;
     if (Number.isFinite(options?.maxResultLength) ? options.maxResultLength > 8 : true) {
       try {
         const tabsRes = await runtime.listTabs();
@@ -304,6 +307,7 @@ export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profile
         }));
         const activeIdx = tabs.findIndex((t) => t.active);
         const active = tabs[activeIdx] ?? tabs[tabs.length - 1];
+        activeTargetId = active?.targetId ?? null;
         header = buildHeader({
           label: active?.label,
           title: active?.title,
@@ -321,7 +325,7 @@ export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profile
     if (options?.includeFrames === false) {
       return buildSnapshot({ cdp, header, options });
     }
-    return buildMultiFrameSnapshot({ cdp, header, options });
+    return buildMultiFrameSnapshot({ cdp, header, options, pageTargetId: activeTargetId });
   };
 
   return {

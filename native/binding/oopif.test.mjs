@@ -240,3 +240,66 @@ test("★ buildMultiFrameSnapshot:frames 摘要给出每个帧的 ref 数", asyn
   assert.equal(snap.frames[0].frameId, "T-a");
   assert.equal(snap.frames[0].refCount, 2);
 });
+
+// ---- 6. 主 frame 的 session 与"拍哪个标签页" -------------------------------
+//
+// 这两条都是 2026-10-25 在**真浏览器**上第一次跑出来的,假对端永远暴露不了:
+//   * 不带 sessionId 的 `Accessibility.getFullAXTree` 会落到 browser 目标,
+//     被拒 `'Accessibility.getFullAXTree' wasn't found`
+//   * `Target.getTargets` 里第一个 page 常是启动时就有的 `chrome://newtab/`,
+//     拍它就拍到一张空标签页 —— 快照里全是 container/iframe,一个字都没有
+
+const pageTarget = (id, url = "https://x/", title = "") => ({
+  targetId: id,
+  type: "page",
+  url,
+  title,
+});
+
+test("★ 有 page target 时:主 frame 的取树**必须带它的 sessionId**", async () => {
+  const cdp = fakeCdp({
+    targets: [pageTarget("T-page")],
+    trees: {
+      main: flat({ node: ax("RootWebArea", "无 session 时的树") }),
+      "S-T-page": flat({ node: ax("RootWebArea", "真页面"), children: [{ node: ax("button", "真按钮") }] }),
+    },
+  });
+
+  const got = await collectFrameTrees({ cdp });
+  assert.equal(got.main.nodes.length, 2, "应该拿到**带 session** 的那棵树");
+
+  const fetch = cdp.calls.find(
+    (c) => c.method === "Accessibility.getFullAXTree" && c.sessionId === "S-T-page",
+  );
+  assert.ok(fetch, "主 frame 的取树请求必须带 page 的 sessionId,否则会落到 browser 目标");
+});
+
+test("★ 指定 pageTargetId 时:attach 的是它,不是列表里第一个", async () => {
+  const cdp = fakeCdp({
+    targets: [pageTarget("T-newtab", "chrome://newtab/"), pageTarget("T-mine", "https://mine/")],
+    trees: {
+      "S-T-newtab": flat({ node: ax("RootWebArea", "新标签页") }),
+      "S-T-mine": flat({ node: ax("RootWebArea", "我的页"), children: [{ node: ax("button", "买") }] }),
+    },
+  });
+
+  const got = await collectFrameTrees({ cdp, pageTargetId: "T-mine" });
+  const attached = cdp.calls.filter((c) => c.method === "Target.attachToTarget").map((c) => c.params.targetId);
+  assert.deepEqual(attached, ["T-mine"], "只该 attach 指定的那个页面");
+  assert.equal(got.main.nodes.length, 2);
+});
+
+test("★ 没指定 pageTargetId 时:取**最后一个** page(不是第一个 newtab)", async () => {
+  const cdp = fakeCdp({
+    targets: [pageTarget("T-newtab", "chrome://newtab/"), pageTarget("T-mine", "https://mine/")],
+    trees: {
+      "S-T-newtab": flat({ node: ax("RootWebArea", "新标签页") }),
+      "S-T-mine": flat({ node: ax("RootWebArea", "我的页"), children: [{ node: ax("button", "买") }] }),
+    },
+  });
+
+  const got = await collectFrameTrees({ cdp });
+  const attached = cdp.calls.filter((c) => c.method === "Target.attachToTarget").map((c) => c.params.targetId);
+  assert.deepEqual(attached, ["T-mine"], "第一个 page 往往是 newtab,取它会拍错页面");
+  assert.equal(got.main.nodes.length, 2);
+});

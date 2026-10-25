@@ -41,15 +41,59 @@ export async function listOopifTargets({ cdp, timeoutMs = 15_000 } = {}) {
  *
  * @returns {{main: {frameId: null, nodes: Array}, frames: Array<{frameId, sessionId, url, title, nodes}>}}
  */
-export async function collectFrameTrees({ cdp, timeoutMs = 15_000, maxFrames = 32 } = {}) {
-  const mainNodes = (await cdp.send("Accessibility.getFullAXTree", {}, { timeoutMs }))?.nodes ?? [];
-
-  let targets = [];
+export async function collectFrameTrees({ cdp, timeoutMs = 15_000, maxFrames = 32, pageTargetId = null } = {}) {
+  // `Accessibility.getFullAXTree` 是**页面目标**的域。不带 sessionId 发出去会落到
+  // browser 目标,直接被拒:`'Accessibility.getFullAXTree' wasn't found`
+  // (2026-10-25 在真浏览器上第一次跑出来的 —— 假 CDP 对端永远暴露不了这个)。
+  //
+  // 所以先 attach 到当前 page target 拿 sessionId,再用它取主 frame。
+  let pageSessionId = null;
+  let targetInfos = [];
   try {
-    targets = (await listOopifTargets({ cdp, timeoutMs })).slice(0, maxFrames);
+    const res = await cdp.send("Target.getTargets", {}, { timeoutMs });
+    targetInfos = res?.targetInfos ?? [];
+    const pages = targetInfos.filter(
+      (t) => t?.type === "page" && typeof t.targetId === "string" && t.targetId.length > 0,
+    );
+    // **优先用调用方指定的那个**(用户正在看的标签页)。没指定时取**最后一个**:
+    // `Target.getTargets` 的顺序里第一个常常是启动时就有的 `chrome://newtab/`,
+    // 拍它等于拍错页面 —— 2026-10-25 真踩过:快照里全是新标签页的 container/iframe,
+    // 而新建的标签页一个字都没进快照。
+    const page = pageTargetId
+      ? pages.find((t) => t.targetId === pageTargetId) ?? pages[pages.length - 1]
+      : pages[pages.length - 1];
+    if (page) {
+      const att = await cdp.send(
+        "Target.attachToTarget",
+        { targetId: page.targetId, flatten: true },
+        { timeoutMs },
+      );
+      pageSessionId = att?.sessionId ?? null;
+    }
   } catch {
-    // 拿不到 target 列表(老内核 / 无权限)就退化成"只有主 frame"
-    targets = [];
+    // 拿不到 Target 域(老内核)就退回"无 session",保持旧行为
+    targetInfos = [];
+  }
+
+  const mainNodes =
+    (await cdp.send(
+      "Accessibility.getFullAXTree",
+      {},
+      pageSessionId ? { timeoutMs, sessionId: pageSessionId } : { timeoutMs },
+    ))?.nodes ?? [];
+
+  let targets = targetInfos.filter(
+    (t) => t?.type === OOPIF_TYPE && typeof t.targetId === "string" && t.targetId.length > 0,
+  );
+  if (targets.length === 0 && targetInfos.length === 0) {
+    // 上一段没拿到 target 列表时,再单独问一次(与旧路径等价)
+    try {
+      targets = (await listOopifTargets({ cdp, timeoutMs })).slice(0, maxFrames);
+    } catch {
+      targets = [];
+    }
+  } else {
+    targets = targets.slice(0, maxFrames);
   }
 
   const frames = [];
@@ -107,6 +151,7 @@ export async function buildMultiFrameSnapshot({
   options = {},
   timeoutMs = 15_000,
   tagNameOf = null,
+  pageTargetId = null,
 } = {}) {
   const maxLength = Number.isFinite(options?.maxResultLength) ? options.maxResultLength : 40_000;
 
@@ -120,7 +165,7 @@ export async function buildMultiFrameSnapshot({
     };
   }
 
-  const trees = await collectFrameTrees({ cdp, timeoutMs });
+  const trees = await collectFrameTrees({ cdp, timeoutMs, pageTargetId });
 
   const allocator = createRefAllocator();
   const lines = [];
