@@ -87,7 +87,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .logs\run-smoke.ps1 `
 **`P8` · 检测基准收尾**(定义见 `docs/下一步方案.md` P8)。三件事,全在本机 + `vps-jp` 上做:
 
 1. ✅ **干净读数 —— 已取得**(工具 `probe/tools/clean_reading_via_ouuut.mjs`):`bot-detector` 16 项 **0 红**
-   (`--headless` 1 黄 = 屏幕 800×600;有头 0 黄)。**顺带查出并修掉一个真 bug**(坑-35)。
+   **两种模式都是 16 项 0 红 0 黄**(修前无头有 1 黄 = 屏幕 800×600,已修 —— 见坑-37)。
+   **顺带查出并修掉一个真 bug**(坑-35)。
    **剩**:把它做成**探针 target 适配器**(产出 `matrix.json` 行、进对照表);
 2. ✅ **`ouuut.auditWebrtc()` 真跑 —— 已完成**(公网候选 **0**;工具 `probe/tools/webrtc_audit_via_ouuut.mjs`。
    ⚠️ 判据是 `ok === true && public === 0`:失败时 counts 全 0、`leaks` 为空,**别当通过** —— 工具会打 `__VERDICT__`);

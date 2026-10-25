@@ -61,6 +61,16 @@ export const FORBIDDEN_ARGS = [
   "--headless=old",
 ];
 
+/**
+ * 无头模式下的默认屏幕尺寸。
+ *
+ * 为什么不"什么都不给":headless 的默认是 **800×600**,而检测站会直接把它点出来
+ * (`Screen is 800x600, the default screen size of headless Chrome`)——
+ * 那是**可指纹化的常数**,不是"无害的默认"(2026-10-25 真机实测)。
+ * 1920×1080 是最常见的桌面分辨率;真正的"按画像给"要等 F5 的 seed 画像接进启动参数。
+ */
+export const DEFAULT_HEADLESS_SCREEN = "1920,1080";
+
 const DEFAULT_FEATURES_TO_DISABLE = [
   // 注意:**不含** ThirdPartyStoragePartitioning(docs/补丁点位.md §三 明确要求)
   // 也**不含** AutomationControlled —— 它是 **Blink** 特性,得走 `--disable-blink-features`,
@@ -215,6 +225,11 @@ export function buildBrowserArgs(opts = {}, env = {}) {
   const winPos = opts.windowPosition ?? env.OUUUT_WINDOW_POSITION ?? null;
   const winSize = opts.windowSize ?? env.OUUUT_WINDOW_SIZE ?? null;
 
+  // 无头的"窗口尺寸 / 屏幕尺寸"是同一件事的两个开关:`--window-size=W,H` 与 `--screen-info={WxH}`
+  // (后者才是 `screen.*` 看到的那个;格式用 `x` 不用 `,`)。
+  const headlessSize = winSize ?? DEFAULT_HEADLESS_SCREEN;
+  const [headlessW, headlessH] = String(headlessSize).split(",");
+
   const args = [
     // ---- 通道:不监听任何 TCP 端口 ----
     "--remote-debugging-pipe",
@@ -238,10 +253,24 @@ export function buildBrowserArgs(opts = {}, env = {}) {
     "--disable-blink-features=AutomationControlled",
     `--disable-features=${DEFAULT_FEATURES_TO_DISABLE.join(",")}`,
     // ---- 视口 / 窗口位置 ----
-    // **无头下一条都不给** —— 没有窗口可摆,给了只是噪音,还会让
-    // 「桌面与服务器同一套参数」这件事变得不成立(F11 的验收)。
+    //
+    // **无头下不给"窗口位置",但必须给"尺寸"** —— 2026-10-25 真机更正:
+    // 原先这里写的是「无头下一条都不给,给了只是噪音」,**那是错的**:
+    // headless 默认 `800×600`,而检测站会直接点名:
+    //   `🟡 Screen is 800x600, the default screen size of headless Chrome`
+    // 这不是噪音,是一个**可指纹化的常数**。所以:
+    //   * 有显式 `--window-size` 就听它(此前无头会把用户显式给的尺寸**丢掉**,那是个 bug);
+    //   * 没给就给一个**常见桌面尺寸**(真正的"按画像给"要等 F5 的 seed 画像接进来,见 P8 备注);
+    //   * `--window-position` 仍不给:没有窗口可摆。
     ...(opts.headless
-      ? []
+      ? [
+          `--window-size=${headlessSize}`,
+          // **只给 --window-size 不够**:它改的是窗口,`screen.width/height` 仍然是 800×600
+          // (2026-10-25 真机:加了 window-size 之后检测站**照样**报 800×600)。
+          // headless 定义"屏幕"用的是 `--screen-info`(格式见 Chromium 自己的用例:
+          // `headless/test/data/protocol/sanity/screen-rotation-*`: `--screen-info={800x600}`)。
+          `--screen-info={${headlessW}x${headlessH}}`,
+        ]
       : winPos || winSize
         ? [
             ...(winPos ? [`--window-position=${winPos}`] : []),

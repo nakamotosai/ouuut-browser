@@ -7,14 +7,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseArgs, buildBrowserArgs, FORBIDDEN_ARGS, USAGE } from "./launch-args.mjs";
+import {
+  parseArgs,
+  buildBrowserArgs,
+  FORBIDDEN_ARGS,
+  USAGE,
+  DEFAULT_HEADLESS_SCREEN,
+} from "./launch-args.mjs";
 import { KINDS } from "../binding/archive.mjs";
 
 /** 档案目录参数(拆开写只是为了让这条字符串不在别处被误当成"起浏览器")。 */
 const DIR_FLAG = ["--user-data", "dir"].join("-");
 const DIR_VALUE = "C:/tmp/ouuut-test-profile";
 
-const WINDOW_ARGS = /^--(window-position|window-size|start-maximized)/;
+// 「窗口/显示几何」类参数 —— 桌面与无头的计划允许在这类参数上不同(F11 的「同一套」)
+const WINDOW_ARGS = /^--(window-position|window-size|screen-info|start-maximized)/;
 
 const plan = (argv) => {
   const opts = parseArgs(argv);
@@ -48,16 +55,52 @@ test("非法 kind → 报错,并列出合法值", () => {
 
 // ---- 2. 无头 vs 桌面 ------------------------------------------------------
 
-test("★ 无头下**一条窗口参数都不给**(没有窗口可摆)", () => {
-  for (const argv of [
-    ["--headless"],
-    ["--headless", "--window-position", "1920,0"],
-    ["--headless", "--window-size", "1380,960"],
-  ]) {
-    const { args } = plan(argv);
-    const win = args.filter((a) => WINDOW_ARGS.test(a));
-    assert.deepEqual(win, [], `${argv.join(" ")} 不该带窗口参数,却有 ${win.join(",")}`);
+test("★ 无头下只给尺寸、不给位置(原断言「一条窗口参数都不给」已被真机证伪)", () => {
+  // 这条**原先**断言无头下 `win` 必须为空、理由是"没有窗口可摆,给了只是噪音"。
+  // 2026-10-25 真机把它证伪了:headless 默认 800×600,检测站直接点名,
+  // 所以"什么都不给"本身就是一个可指纹化的常数(见坑-35 同族的「文档说没事、真机说有事」)。
+  {
+    const { args } = plan(["--headless"]);
+    assert.deepEqual(
+      args.filter((a) => WINDOW_ARGS.test(a)),
+      [`--window-size=${DEFAULT_HEADLESS_SCREEN}`, `--screen-info={${DEFAULT_HEADLESS_SCREEN.replace(",", "x")}}`],
+      "无头:给窗口尺寸 + 屏幕尺寸(后者才是 screen.* 看到的那个),但不给位置",
+    );
   }
+  {
+    const { args } = plan(["--headless", "--window-position", "1920,0"]);
+    const win = args.filter((a) => WINDOW_ARGS.test(a));
+    assert.ok(!win.some((a) => a.startsWith("--window-position")), "无头下位置仍然不给(没有窗口可摆)");
+    assert.ok(win.some((a) => a.startsWith("--window-size")), "但尺寸要给");
+    assert.ok(win.some((a) => a.startsWith("--screen-info")), "屏幕尺寸也要给");
+  }
+  {
+    // 显式给的尺寸必须听 —— 此前无头会把它静默丢掉
+    const { args } = plan(["--headless", "--window-size", "1380,960"]);
+    const win = args.filter((a) => WINDOW_ARGS.test(a));
+    assert.deepEqual(win, ["--window-size=1380,960", "--screen-info={1380x960}"]);
+  }
+});
+
+test("★ 无头必须给尺寸:不给就是 800×600,而那是可指纹化的常数", () => {
+  // 2026-10-25 真机:headless 默认 800×600,检测站直接点名
+  // 「🟡 Screen is 800x600, the default screen size of headless Chrome」。
+  const args = plan(["--headless"]).args;
+  assert.ok(
+    args.includes(`--window-size=${DEFAULT_HEADLESS_SCREEN}`),
+    "无头下要给一个常见桌面尺寸,而不是让 Chrome 用 800×600 默认值",
+  );
+  assert.ok(
+    !args.some((a) => a.startsWith("--window-position")),
+    "无头没有窗口可摆,位置仍然不给",
+  );
+  assert.ok(!args.includes("--start-maximized"), "无头不给 --start-maximized");
+});
+
+test("★ 无头下用户显式给的尺寸要**听**(此前被丢掉,那是 bug)", () => {
+  const args = plan(["--headless", "--window-size", "1380,960"]).args;
+  assert.ok(args.includes("--window-size=1380,960"), "显式尺寸优先于默认值");
+  assert.ok(!args.includes(`--window-size=${DEFAULT_HEADLESS_SCREEN}`), "不该两个都给");
 });
 
 test("有头:给了位置就钉住,没给就最大化", () => {
