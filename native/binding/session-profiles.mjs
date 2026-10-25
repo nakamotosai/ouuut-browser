@@ -1,0 +1,160 @@
+// native/binding/session-profiles.mjs —— 把 `--profile-kind` 接到**真会话**上
+//
+// ## 为什么需要这一层(证据,不是设计洁癖)
+//
+// `native/bin/launch-args.mjs` 早就解析并校验 `--profile-kind`,但 `git grep profileKind`
+// 全仓只命中它自己(+ 它的测试)—— **没有任何下游消费者**。`createOuUutRuntime()` 被调用时
+// 没传 `profiles`,于是 `listProfiles()` 恒返回硬编码的单条 `{id:"default",name:"默认档案"}`。
+// 换句话说:`archive.mjs` 的三种 kind 与两层硬隔离**从来没上过真链路** ——
+// 「三种 kind 各起一次」只会得到三个一模一样的会话,什么都证明不了。本文件是那条缺失的接线。
+//
+// ## kind → 浏览器侧的映射
+//
+// Chrome 的 **browser context** 就是「一个用户数据目录里的一个隔离 cookie/storage 池」:
+//
+//   | kind         | 浏览器侧                                              | 持久化 |
+//   |--------------|-------------------------------------------------------|--------|
+//   | `real`       | **默认 browser context**(不发 `createBrowserContext`)| 由 `--user-data-dir` 决定 |
+//   | `persona`    | `Target.createBrowserContext { disposeOnDetach:false }`| 留在该 user-data-dir 里 |
+//   | `disposable` | `Target.createBrowserContext { disposeOnDetach:true }` | 不留痕(detach 即销毁) |
+//
+// 这张表与 `archive.mjs` 头部 ADR-007 的 kind 表一一对应 —— kind 的语义**只在那边定义**,
+// 这里只做「把它落到 Chrome 的哪个池」这一件事,不重新发明一套。
+//
+// ## 为什么 kind 没给时**不**造档案引擎
+//
+// 不给 `--profile-kind` = 使用者没要求任何档案隔离。此时会话里只有一条默认档案,
+// **不存在跨档案风险**(`archive` 的闸是为多档案准备的),所以既不该建 browser context,
+// 也不该把 cookie 命令的闸打开 —— 那会把"今天能用的"变成"今天不能用的"。
+// 于是 `kind === null` 直接返回 `archive: null`,运行时据此**逐字节**退回今天的行为
+// (见 `ouuut-runtime.mjs` 里 `archive` 缺席时那条路)。
+
+import { createArchive, KINDS, ArchiveError, INVALID_ARGUMENT } from "./archive.mjs";
+
+/** 会话里 `real` 档案的簿记 id —— 它是机器上恰好一个的默认档案,由 `--user-data-dir` 决定。 */
+const REAL_PROFILE_ID = "real";
+
+/** 未给 kind 时的默认档案:形状与 `ouuut-runtime.mjs` 的硬编码兜底**逐字段**一致。 */
+const FALLBACK_PROFILE = Object.freeze({ id: "default", name: "默认档案", isDefault: true });
+
+/** 三种 kind 的自拟默认名(id 当名会让人看不出这是哪个档案)。 */
+const DEFAULT_NAMES = Object.freeze({
+  real: "真实档案",
+  persona: "长期画像",
+  disposable: "一次性档案",
+});
+
+/**
+ * 开一次会话的档案集合。
+ *
+ * @param {object} o
+ * @param {object} o.cdp        `spawnCdpPipe()` 的返回值(要能 `send`)
+ * @param {"real"|"persona"|"disposable"|null} [o.kind] 使用者选的档案种类;null = 没选
+ * @param {string|null} [o.userDataDir] 档案目录(CLI 显式给的那个;没给 = 没给)
+ * @param {string|null} [o.profileId]   档案 id(不传时 persona/disposable 用 kind 当 id)
+ * @param {string|null} [o.name]        档案名(不传时用 kind 的默认名)
+ * @returns {Promise<{archive: object|null, profiles: Array, sessionProfileId: string|null, dispose: () => Promise<void>}>}
+ */
+export async function openSessionProfiles({
+  cdp,
+  kind = null,
+  userDataDir = null,
+  profileId = null,
+  name = null,
+} = {}) {
+  // 没选 kind:**不建浏览器 context,也不建档案引擎**。今天怎么跑,现在还怎么跑。
+  if (kind === null) {
+    return {
+      archive: null,
+      profiles: [FALLBACK_PROFILE],
+      sessionProfileId: null,
+      dispose: async () => {},
+    };
+  }
+  if (!KINDS.includes(kind)) {
+    throw new ArchiveError(
+      `kind=${JSON.stringify(kind)} 不合法;只允许 ${KINDS.join(" / ")}`,
+      INVALID_ARGUMENT,
+    );
+  }
+  if (!cdp || typeof cdp.send !== "function") {
+    throw new ArchiveError("openSessionProfiles 需要一个 CDP 客户端(cdp.send)", INVALID_ARGUMENT);
+  }
+
+  const definitions = [];
+
+  // `real` 恒为默认那一档。**给了档案目录**时它就在会话里(它代表这个 user-data-dir 的默认身份);
+  // 没给目录 = 会话用的是本次会话专用的临时目录,那里的默认 context **不是**使用者的真实身份,
+  // 不能拿它冒充 real —— 所以那种情况下会话里只有被选中的那个 kind。
+  if (userDataDir) {
+    definitions.push({
+      id: REAL_PROFILE_ID,
+      name: DEFAULT_NAMES.real,
+      kind: "real",
+      // **刻意不给 `browserContextId`**:默认 context 在 Chrome 那边没有 id,
+      // 只能靠**省略**参数寻址(2026-10-25 真机:传 "default" 会被拒)。
+      // `archive.mjs` 会把 real 的簿记值规范成 `null`,那正是"省略"的记号。
+    });
+  }
+
+  let sessionProfileId;
+  let disposableContextId = null;
+
+  if (kind === "real") {
+    // `parseArgs` 已经强制 real 必须给目录;这里再兜一次,免得别的入口绕过 CLI 传进来。
+    if (!userDataDir) {
+      throw new ArchiveError(
+        "real 档案必须给出档案目录 —— 那是使用者的真实身份,不能替他造",
+        INVALID_ARGUMENT,
+      );
+    }
+    sessionProfileId = REAL_PROFILE_ID;
+  } else {
+    const id = typeof profileId === "string" && profileId !== "" ? profileId : kind;
+    const nickname = typeof name === "string" && name !== "" ? name : DEFAULT_NAMES[kind];
+    // persona 要**留在** user-data-dir 里(长期画像),disposable 用完即弃 —— 差别就在这一个布尔。
+    const created = await cdp.send("Target.createBrowserContext", {
+      disposeOnDetach: kind === "disposable",
+    });
+    const contextId = created?.browserContextId;
+    if (typeof contextId !== "string" || contextId === "") {
+      throw new ArchiveError(
+        `Target.createBrowserContext 没返回 browserContextId(收到 ${JSON.stringify(created)})`,
+        INVALID_ARGUMENT,
+      );
+    }
+    definitions.push({ id, name: nickname, kind, browserContextId: contextId });
+    sessionProfileId = id;
+    if (kind === "disposable") disposableContextId = contextId;
+  }
+
+  const archive = createArchive({ profiles: definitions });
+  let disposed = false;
+
+  return {
+    archive,
+    // 对外形状以档案引擎为准(`{id,name,isDefault,kind}`),不在这里另抄一份
+    profiles: archive.listProfiles().profiles,
+    sessionProfileId,
+    /**
+     * 收尾:销毁 disposable 的 browser context。
+     *
+     * * **幂等** —— 收尾路径可能被走两次(正常结束 + 异常兜底),重复调用是常态,不该炸。
+     * * **绝不在 `real` 上动手** —— real 是使用者的真实身份,`disposableContextId` 对它恒为 null。
+     * * persona **不销毁** —— 长期画像要留在 user-data-dir 里(ADR-007)。
+     */
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      if (!disposableContextId) return;
+      try {
+        await cdp.send("Target.disposeBrowserContext", { browserContextId: disposableContextId });
+      } catch (err) {
+        // 收尾阶段的失败不该盖住主流程的结果(浏览器可能已经死了)—— 记一行,别抛。
+        process.stderr.write(
+          `[session-profiles] 销毁 disposable context 失败:${err?.message ?? err}\n`,
+        );
+      }
+    },
+  };
+}

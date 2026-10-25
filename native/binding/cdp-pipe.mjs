@@ -254,9 +254,9 @@ export function spawnCdpPipe({
   if (pipePaths) {
     servers[0].once("connection", (sock) => {
       toChild = sock;
-      sock.on("error", (e) => {
-        failAll(new CdpPipeError(`${name} 的写管道出错:${e.message}`, { cause: e }));
-      });
+      // 与 POSIX 侧**同一套语义**(只记不拒):命名管道的写端出错同样是"对端没了"的信号,
+      // 就地 failAll 会把 exit 那条路径才能拼出的诊断(退出码 / stderr / 启动参数)冲掉。
+      sock.on("error", noteTransportError(`${name} 的写管道`));
       for (const item of writeQueue) toChild.write(item.data, item.cb);
       writeQueue.length = 0;
     });

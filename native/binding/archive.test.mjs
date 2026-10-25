@@ -237,6 +237,56 @@ test("★ 闸层:指向自己的档案 → 放行(闸不能连正常用法一起
   assert.equal(r.browserContextId, "ctx-alice");
 });
 
+test("★ 闸层:real 会话的寻址是「省略」—— 省略放行,带 id 一律拦", () => {
+  const { archive } = fresh();
+  // real = 默认 browser context:它没有 id,省略参数才是"就地"
+  assert.equal(
+    archive.checkCookieCommand({ sessionProfileId: "real-1", method: "Storage.getCookies", params: {} }).ok,
+    true,
+    "real 会话省略 browserContextId 是**正确用法**(真机实测:默认 context 只能用省略寻址)",
+  );
+  // 带上任何 id 都只能指向别的档案(2026-10-25 真机:连 "default" 都会被 Chrome 拒)
+  for (const bad of ["default", "ctx-alice", "ctx-tmp1"]) {
+    assert.throws(
+      () =>
+        archive.checkCookieCommand({
+          sessionProfileId: "real-1",
+          method: "Storage.getCookies",
+          params: { browserContextId: bad },
+        }),
+      (e) => e.error_code === ISOLATION_VIOLATION,
+      `real 会话带 ${bad} 必须被拦`,
+    );
+  }
+});
+
+test("★ 句柄层:real 的句柄**不发** browserContextId(发了真机会 Failed to find browser context)", () => {
+  const { archive } = fresh();
+  const sent = [];
+  const c = archive.cookiesFor("real-1", (method, params) => {
+    sent.push([method, params]);
+    return { cookies: [] };
+  });
+  assert.equal(c.browserContextId, null, "real 的簿记值是 null —— 它的含义就是「省略」");
+  c.getCookies();
+  c.getCookies({ browserContextId: "ctx-alice" }); // 想偷看 alice → 覆盖式丢掉
+  assert.equal(sent.length, 2);
+  for (const [method, params] of sent) {
+    assert.equal(method, "Storage.getCookies");
+    assert.ok(
+      !("browserContextId" in params),
+      `${method} 不该带 browserContextId(收到 ${JSON.stringify(params)})`,
+    );
+  }
+});
+
+test("★ 端到端:real 的句柄落回默认池、alice 的落回自己的池 —— 两条路都对", () => {
+  const { archive, browser } = fresh();
+  const send = (m, p) => browser.send(m, p);
+  assert.equal(archive.cookiesFor("real-1", send).getCookies().cookies[0].value, "REAL_SECRET");
+  assert.equal(archive.cookiesFor("p-alice", send).getCookies().cookies[0].value, "ALICE");
+});
+
 test("闸层:非 cookie 方法不受影响(不误伤)", () => {
   const { archive } = fresh();
   for (const m of ["Page.navigate", "Runtime.evaluate", "Snapshot.captureSnapshot", "Target.getTargets"]) {

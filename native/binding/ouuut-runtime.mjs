@@ -45,6 +45,7 @@ import {
 import { buildHeader, buildSnapshot } from "./snapshot.mjs";
 import { buildMultiFrameSnapshot } from "./oopif.mjs";
 import { auditWebrtc } from "./webrtc-audit.mjs";
+import { ISOLATION_VIOLATION } from "./archive.mjs";
 
 /** 与上游一致的默认响应超时(见 browser-runtime.ts 的 RESPONSE_TIMEOUT_MS 量级)。 */
 const VERSION_TIMEOUT_MS = 10_000;
@@ -64,9 +65,21 @@ export class OuUutRuntimeError extends Error {
  * @param {object} o.cdp           `spawnCdpPipe()` 的返回值
  * @param {string} [o.namespace]   仅用于错误信息
  * @param {object} [o.registry]    任务空间注册表(默认新建一个空表)
- * @param {Array}  [o.profiles]    `listProfiles()` 的数据源(M3 才做三种 kind)
+ * @param {Array}  [o.profiles]    `listProfiles()` 的数据源(没有 `archive` 时用)
+ * @param {object} [o.archive]     档案引擎(`session-profiles.openSessionProfiles()` 交出来的那个)。
+ *                                 有它时:`listProfiles()` 以它为准;cookie 命令过它的隔离闸;
+ *                                 多出 `cookiesFor()` 这个档案句柄入口。
+ * @param {string} [o.sessionProfileId] 本会话当前使用的档案 id(隔离闸的判定基准)
  */
-export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profiles, cdpGuard } = {}) {
+export function createOuUutRuntime({
+  cdp,
+  namespace = "ouuut",
+  registry,
+  profiles,
+  cdpGuard,
+  archive,
+  sessionProfileId,
+} = {}) {
   if (!cdp || typeof cdp.sendRaw !== "function" || typeof cdp.onRaw !== "function") {
     throw new OuUutRuntimeError("createOuUutRuntime 需要一个 spawnCdpPipe() 的返回值");
   }
@@ -129,6 +142,30 @@ export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profile
         USER_IN_CONTROL,
         `任务已交给用户,拒绝执行会改变浏览器状态的命令:${parsed.method}`,
       );
+    }
+    // **档案隔离门**(M3 硬隔离;P2a 接上真链路)。
+    //
+    // 规则来自 `archive.mjs`:cookie 方法必须显式带上**本会话这个档案**的 `browserContextId`。
+    // 不带 = 会落到默认档案 → 读到别档案的 cookie(这正是 ego #319:1,105 个 cookie 泄漏)。
+    //
+    // 为什么放在 user-control 门**之后**、`cdpGuard` **之前**:
+    // 所有权是更外层的语义(先挡"已交给用户"),而驱动层守卫是更内层的"这条命令本身危不危险";
+    // 档案闸夹在中间 —— 它管的是"这条命令指向哪个档案",与命令本身无关。
+    //
+    // 只在**同时有档案引擎与 sessionProfileId** 时才过闸:没有 engine 就没有档案可言
+    // (没选 `--profile-kind` 那条路),没有 sessionProfileId 则压根没有"本会话档案"这个基准 ——
+    // 两者缺一都不该凭空拦住 cookie 命令。
+    if (archive && sessionProfileId) {
+      try {
+        archive.checkCookieCommand({ sessionProfileId, method: parsed.method, params: parsed.params ?? {} });
+      } catch (err) {
+        // 违规的命令**绝不发出去**;代号用档案引擎给的那个(OUUUT_PROFILE_ISOLATION_VIOLATION)
+        return reportSendError(
+          parsed,
+          err?.error_code ?? ISOLATION_VIOLATION,
+          err?.message ?? String(err),
+        );
+      }
     }
     // **驱动层守卫**(M4):按住有页面副作用的 CDP 命令。
     // 放在 user-control 门**之后**:所有权是更外层的语义,先挡那个。
@@ -264,8 +301,22 @@ export function createOuUutRuntime({ cdp, namespace = "ouuut", registry, profile
 
   /** `helpers.ts:105-121` 逐字段校验:`id`/`name` 非空 string、`isDefault` boolean。 */
   runtime.listProfiles = async function listProfiles() {
+    // 有档案引擎时**以它为准**,而不是那个静态兜底 —— 档案会随 createProfile/disposeProfile 变,
+    // 缓存一份在这里迟早会和引擎漂开。
+    if (archive) return archive.listProfiles();
     return { profiles: profileList.map((p) => ({ id: p.id, name: p.name, isDefault: Boolean(p.isDefault) })) };
   };
+
+  // ---- 档案句柄(**第一层防线**:结构性隔离)---------------------------------
+  //
+  // `cookiesFor(profileId)` 交出的是**绑死该档案**的句柄:`browserContextId` 由句柄自动注入,
+  // 调用方**没有途径**省略它 —— 于是"正确用法"就是"默认用法"(见 archive.mjs 抬头)。
+  //
+  // 只在有档案引擎时才存在:没有档案就谈不上"档案句柄",凭空多一个方法反而会让人以为能用。
+  if (archive) {
+    runtime.cookiesFor = (profileId) =>
+      archive.cookiesFor(profileId, (method, params) => cdp.send(method, params));
+  }
 
   // ---- user-control 门(**发送侧**强制)-------------------------------------
   // 交给用户之后,agent 不得再改浏览器。这一步必须在**我们这层**做:

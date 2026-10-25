@@ -28,6 +28,7 @@
 import { spawnCdpPipe } from "../binding/cdp-pipe.mjs";
 import { createOuUutRuntime } from "../binding/ouuut-runtime.mjs";
 import { createTaskSpaceRegistry } from "../binding/task-spaces.mjs";
+import { openSessionProfiles } from "../binding/session-profiles.mjs";
 import { parseArgs, buildBrowserArgs, USAGE } from "./launch-args.mjs";
 
 /**
@@ -51,8 +52,30 @@ export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.ar
     env: opts.extraEnv ? { ...env, ...opts.extraEnv } : env,
   });
 
+  // 档案是**会话级**的:浏览器起来了才建得了 browser context(`persona`/`disposable`),
+  // 所以这一步必须在 `spawn` 之后 —— 也是 `--profile-kind` 真正落到浏览器侧的唯一时刻。
+  // 建档案失败时浏览器已经起了,不能就这么扔下 —— 先关掉它再抛(不留孤儿进程)。
+  let session;
+  try {
+    session = await openSessionProfiles({
+      cdp,
+      kind: opts.profileKind,
+      userDataDir: opts.userDataDir,
+    });
+  } catch (err) {
+    await cdp.close();
+    throw err;
+  }
+
   const registry = createTaskSpaceRegistry();
-  const runtime = createOuUutRuntime({ cdp, registry, namespace: opts.namespace });
+  const runtime = createOuUutRuntime({
+    cdp,
+    registry,
+    namespace: opts.namespace,
+    archive: session.archive,
+    profiles: session.profiles,
+    sessionProfileId: session.sessionProfileId,
+  });
   const previous = globalThis.ouuut;
   globalThis.ouuut = runtime.api;
 
@@ -76,11 +99,14 @@ export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.ar
       },
     });
   } finally {
-    // **收尾顺序**:先摘回调 → 再还原 globalThis → 最后关进程。
-    // 反过来的话,浏览器关掉后 harness 还可能在回调里发命令,会拿到一堆通道关闭错误。
+    // **收尾顺序**:先摘回调 → 再销毁 disposable 档案 → 还原 globalThis → 最后关进程。
+    // 反过来的话,浏览器关掉后 harness 还可能在回调里发命令,会拿到一堆通道关闭错误;
+    // 而档案的销毁**必须在关进程之前**(要往还活着的管道上发 `Target.disposeBrowserContext`)。
     try {
       await runtime.dispose?.();
     } finally {
+      // **成败都要走**:disposable 用完即弃(ADR-007),异常退出也不能把它留在磁盘里。
+      await session.dispose?.();
       if (previous === undefined) delete globalThis.ouuut;
       else globalThis.ouuut = previous;
       await cdp.close();

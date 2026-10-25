@@ -19,6 +19,19 @@ const NUL = 0x00;
 const WITH_OOPIF = process.env.FAKE_PEER_OOPIF === "1";
 /** `leak` = 复刻 ADR-014 那组泄漏;`clean` = 0 个候选(CloakBrowser 那种)。 */
 const WEBRTC_MODE = process.env.FAKE_PEER_WEBRTC ?? "";
+
+// ---- 档案(browser context)替身 -------------------------------------------
+//
+// 让「两条档案的 cookie 互不可见」这件事**可观测**,而不是靠断言某个函数被调用过。
+// key = `browserContextId`;**没给参数就落到 `default` 池** —— 这正是 Chrome 的行为,
+// 也正是 ego #319 里那 1,105 个 cookie 的来源(缺省 ⇒ 默认档案)。
+const browserContexts = new Map();
+let contextSeq = 0;
+function poolOf(contextId) {
+  const key = contextId ?? "default";
+  if (!browserContexts.has(key)) browserContexts.set(key, { disposeOnDetach: null, cookies: [] });
+  return browserContexts.get(key);
+}
 const OUT = 4; // 子进程往 fd 4 写 = 父进程读
 const IN = 3; // 父进程往 fd 3 写 = 子进程读
 
@@ -93,6 +106,30 @@ const handlers = {
       ],
     }),
   "Target.createTarget": (id, params) => reply(id, { targetId: "T-new-" + (params?.url ? "with-url" : "blank") }),
+
+  // ---- 档案(browser context)替身:P2a 的隔离验收靠它们可观测 ----
+  // `disposeOnDetach` 原样记进池里,测试据此断言 persona=false / disposable=true。
+  "Target.createBrowserContext": (id, params) => {
+    const contextId = `ctx-${++contextSeq}`;
+    browserContexts.set(contextId, { disposeOnDetach: Boolean(params?.disposeOnDetach), cookies: [] });
+    reply(id, { browserContextId: contextId });
+  },
+  "Target.disposeBrowserContext": (id, params) => {
+    browserContexts.delete(params?.browserContextId);
+    reply(id, {});
+  },
+  "Target.getBrowserContexts": (id) => reply(id, { browserContextIds: [...browserContexts.keys()] }),
+  // cookie 池**按 browserContextId 分开** —— 跨档案读写会拿到另一个池(或空池),于是"隔离"可断言
+  "Storage.getCookies": (id, params) =>
+    reply(id, { cookies: poolOf(params?.browserContextId).cookies.slice() }),
+  "Storage.setCookies": (id, params) => {
+    poolOf(params?.browserContextId).cookies.push(...(params?.cookies ?? []));
+    reply(id, {});
+  },
+  "Storage.clearCookies": (id, params) => {
+    poolOf(params?.browserContextId).cookies = [];
+    reply(id, {});
+  },
   // harness 靠这个拿到 sessionId,拿不到就抛「Target.attachToTarget returned no sessionId」
   "Target.attachToTarget": (id, params) => reply(id, { sessionId: "S-fake-" + (params?.targetId ?? "?") }),
   // 供 snapshot 走通的最小 AX 树(角色名与结构对齐 example.com 的实测输出)
@@ -228,7 +265,8 @@ readStream.on("data", (chunk) => {
           fs.writeSync(2, `peer-guard: ${msg.method}\n`);
           // 落文件:stderr 会被 node --test 吞掉,拿不到"harness 到底发了什么"这份清单
           const logPath = process.env.FAKE_PEER_LOG;
-          if (logPath) fs.appendFileSync(logPath, msg.method + "\n");
+          // 参数也一起落:测试要断言的是 `disposeOnDetach` 这类**参数**,不只是方法名。
+          if (logPath) fs.appendFileSync(logPath, msg.method + " " + JSON.stringify(msg.params ?? {}) + "\n");
         } catch {
           /* 日志本身失败不该影响对端 */
         }

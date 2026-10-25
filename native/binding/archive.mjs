@@ -99,16 +99,27 @@ function normalizeProfile(raw, index) {
       INVALID_ARGUMENT,
     );
   }
-  // `isDefault` 由 kind 推导,不接受调用方自己传 —— 否则 real 可能不是默认,自相矛盾
+  // `real` 的寻址方式与其它 kind **在协议层就不一样**,所以簿记值也不同:
+  // Chrome 的「默认 browser context」**没有 id**,`Target.getBrowserContexts` 也不列它,
+  // 只能靠**省略** `browserContextId` 来寻址。
+  // 2026-10-25 真机实测(Chromium 156,`probe-ctx.mjs`):
+  //   * 省略 → `README OK`(拿到默认 context 的 cookie)
+  //   * `browserContextId:"default"` → `Failed to find browser context for id default`
+  //   * 任意假 id → 同样失败
+  // ⇒ real 的簿记值恒为 `null`(语义:**省略**),**不接受**调用方传字符串进来 ——
+  //   传了不会"更严格",只会让真机报错(这正是 2026-10-25 接线时发现的缝隙)。
+  const isReal = kind === "real";
   return Object.freeze({
     id,
     name,
     kind,
-    isDefault: kind === "real",
+    isDefault: isReal,
     // 内部簿记,不出现在 listProfiles() 的对外形状里
-    _browserContextId: typeof raw.browserContextId === "string" && raw.browserContextId !== ""
-      ? raw.browserContextId
-      : id,
+    _browserContextId: isReal
+      ? null
+      : typeof raw.browserContextId === "string" && raw.browserContextId !== ""
+        ? raw.browserContextId
+        : id,
   });
 }
 
@@ -255,8 +266,12 @@ export function createArchive({ profiles = [] } = {}) {
             INVALID_ARGUMENT,
           );
         }
-        // 覆盖式注入:即便调用方硬塞一个 browserContextId 也无效
-        return send(method, { ...params, browserContextId: bound });
+        // 覆盖式:调用方硬塞的 browserContextId 一律丢掉
+        const { browserContextId: _dropped, ...rest } = params ?? {};
+        // real 的寻址是**省略**(`bound === null`)—— 见 normalizeProfile 里的真机实测
+        return bound === null
+          ? send(method, rest)
+          : send(method, { ...rest, browserContextId: bound });
       };
       return Object.freeze({
         profileId: p.id,
@@ -293,8 +308,22 @@ export function createArchive({ profiles = [] } = {}) {
 
       const mine = require(sessionProfileId);
       const want = params?.browserContextId;
+      const absent = want === undefined || want === null || want === "";
 
-      if (want === undefined || want === null || want === "") {
+      // real 的寻址是「省略」:默认 context 没有 id,带上 id 反而**只可能指向别的档案**。
+      // (2026-10-25 真机:带 `"default"` 会被 Chrome 直接拒 —— `Failed to find browser context for id default`。)
+      if (mine._browserContextId === null) {
+        if (absent) return { ok: true, browserContextId: null };
+        const owner = [...byId.values()].find((x) => x._browserContextId === want);
+        throw new ArchiveError(
+          `当前档案是 ${mine.id}(kind=real,即默认 browser context),它的寻址方式是**省略**` +
+            `browserContextId;带上 ${JSON.stringify(want)}${owner ? `(${owner.id})` : "(未知档案)"}` +
+            ` 只可能指向别的档案,拦下`,
+          ISOLATION_VIOLATION,
+        );
+      }
+
+      if (absent) {
         throw new ArchiveError(
           `${method} 没带 browserContextId —— 会落到默认档案,可能读到别的档案的 cookie` +
             `(这正是 ego #319:1,105 个 cookie 泄漏)。当前档案是 ${mine.id}`,
