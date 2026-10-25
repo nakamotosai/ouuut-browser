@@ -84,18 +84,21 @@ test("★ 无头下只给尺寸、不给位置(原断言「一条窗口参数都
 });
 
 test("★ 有头**不许**带 --screen-info/--window-size(否则几何这一维就没约束了)", () => {
-  // 核验者用突变实验指出:`WINDOW_ARGS` 正则放宽后,有头分支若混进 `--screen-info`
-  // 不会被任何断言抓到("同一档案"那条会把两边一起剥掉)。这里对**三条分支**各补一条负断言 ——
+  // 核验者用突变实验指出:`WINDOW_ARGS` 正则放宽后,有头分支若混进 `--screen-info` / `--window-size`
+  // 不会被任何断言抓到("同一档案"那条会把两边一起剥掉)。这里对**三条分支**各断定 ——
   // 只守 `plan([])`(走 --start-maximized 那条)是不够的:给位置/给尺寸那两个分支同样是"有头"。
+  // (2026-10-25 第二次补:原先 `--window-size` 只对默认分支断言,给位置那条分支塞进去仍全绿。)
   for (const argv of [[], ["--window-position", "1920,0"], ["--window-size", "1380,960"]]) {
     const { args } = plan(argv);
-    assert.ok(
-      !args.some((a) => a.startsWith("--screen-info")),
-      `${argv.join(" ") || "(默认)"}:有头走真实屏幕,不该给 --screen-info`,
-    );
+    const tag = argv.join(" ") || "(默认)";
+    assert.ok(!args.some((a) => a.startsWith("--screen-info")), `${tag}:有头走真实屏幕,不该给 --screen-info`);
+    if (argv[0] !== "--window-size") {
+      // 只有"调用方明确给了尺寸"时才允许出现 --window-size
+      assert.ok(!args.some((a) => a.startsWith("--window-size")), `${tag}:没给尺寸就不该替它加 --window-size`);
+    }
   }
-  assert.ok(!plan([]).args.some((a) => a.startsWith("--window-size")), "没给尺寸时就该 --start-maximized");
-  assert.ok(plan([]).args.includes("--start-maximized"));
+  assert.ok(plan([]).args.includes("--start-maximized"), "默认那条走最大化");
+  assert.ok(plan(["--window-position", "1920,0"]).args.includes("--window-position=1920,0"), "给了位置就钉住");
 });
 
 test("★ 畸形的 --window-size 不许造出畸形 --screen-info(会静默退回 800×600)", () => {
@@ -110,16 +113,9 @@ test("★ 畸形的 --window-size 不许造出畸形 --screen-info(会静默退�
   }
 });
 
-test("★ 无头下用户显式给的尺寸要**听**(此前被丢掉,那是 bug)", () => {
-  // (合并自原先重复的一条:其断言只比 `--window-size` 前缀,已被上面那条 deepEqual 完全覆盖;
-  //  而它那句「不该两个都给」的消息在改成"窗口+屏幕两给"之后就失效了 —— 一并收掉。)
-  const args = plan(["--headless", "--window-size", "1380,960"]).args;
-  assert.ok(args.includes("--window-size=1380,960"), "显式尺寸优先于默认值");
-  assert.ok(
-    !args.some((a) => a.startsWith("--window-size=1880")),
-    "默认窗口尺寸不该同时出现(屏幕那个开关是另一回事,它必须给)",
-  );
-});
+// (原先这里还有一条 `★ 无头下用户显式给的尺寸要听` —— 它的断言(`--window-size=1380,960` 在、
+//  默认那条不在)已被上面 `无头下只给尺寸、不给位置` 那条的 `deepEqual(win, ["--window-size=1380,960", SCREEN])`
+//  完全覆盖。2026-10-25 核验指出:上一轮只改了它的消息、用例本身还在 —— 现在**真删掉**(用一条覆盖即可)。
 
 test("有头:给了位置就钉住,没给就最大化", () => {
   assert.ok(plan(["--window-position", "1920,0"]).args.includes("--window-position=1920,0"));

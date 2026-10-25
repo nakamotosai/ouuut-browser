@@ -125,20 +125,28 @@ export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.ar
  *
  * **尽力而为,而且只报不抛**:浏览器刚退出时它的孙子进程可能还占着文件(坑-27),
  * 为了一次清理失败把一场正常会话判成失败,不值得。
+ *
+ * ⚠️ 已知后果(2026-10-25 核验实测):**可能只删成"空壳"** —— 能删的文件删掉、
+ * 被占住的那个子目录留下(`EBUSY`)。所以失败消息里明说这一点,别让人以为目录一定干净了。
  * ⚠️ 调用方显式给的档案目录**绝不删** —— 那是使用者的身份,由 `ephemeralUserDataDir` 把关。
  */
 export async function removeSessionUserDataDir(dir, namespace = "ouuut") {
   const { rm } = await import("node:fs/promises");
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  // 两次尝试、每次只留一点余量:失败路径**不该拖慢收尾**。
+  // (第一版 3 次 × 内建重试给失败路径加了约 6 秒 —— 核验实测 6219 ms。)
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      await rm(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 150 });
+      await rm(dir, { recursive: true, force: true, maxRetries: 1, retryDelay: 100 });
       return true;
     } catch (err) {
-      if (attempt === 3) {
-        process.stderr.write(`[${namespace}] 会话临时档案目录没清干净(${dir}):${err?.message ?? err}\n`);
+      if (attempt === 2) {
+        process.stderr.write(
+          `[${namespace}] 会话临时档案目录没清干净(${dir}):${err?.message ?? err}\n` +
+            `  可能有孙子进程还占着文件(坑-27);目录可能只删成空壳,不影响本次会话\n`,
+        );
         return false;
       }
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 200));
     }
   }
   return false;
