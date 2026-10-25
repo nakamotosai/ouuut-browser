@@ -27,16 +27,20 @@
 
 import { spawnCdpPipe } from "../binding/cdp-pipe.mjs";
 import { readFile } from "node:fs/promises";
-import { createOuUutRuntime } from "../binding/ouuut-runtime.mjs";
-import { createTaskSpaceRegistry } from "../binding/task-spaces.mjs";
-import { openSessionProfiles } from "../binding/session-profiles.mjs";
 import { assertProxyUsable } from "../binding/proxy.mjs";
 import { resolveHarnessEntry } from "../binding/paths.mjs";
+import { openSession } from "../binding/session.mjs";
 import { checkEgress, measureEgressIp } from "../binding/egress.mjs";
 import { parseArgs, buildBrowserArgs, USAGE } from "./launch-args.mjs";
 
 /**
- * 起一次会话:装好 `globalThis.ouuut`,执行 `fn`,然后**无论成败都收尾**。
+ * 起一次会话:装好 `globalThis.<ns>`,执行 `run`,然后**无论成败都收尾**。
+ *
+ * 会话的起与收在 `binding/session.mjs` —— **三入口共用一份**(P5)。一份而不是三份,是因为
+ * 收尾顺序(摘回调 → 销毁档案 → 还原全局 → 关进程 → 删临时目录)只有一种是对的,拷贝必然漂。
+ *
+ * ⚠️ 这里**不再**给 `run` 传 `disposeHarness`:那个钩子从加进来就没被调用过(harness 自己会摘
+ * 它的回调,见 `ouuut-runtime.mjs` 里 `dispose()` 的注释),是死代码 —— 2026-10-25 随 P5 清掉。
  *
  * @param {object} o
  * @param {(o: object) => Promise<T>} o.run
@@ -46,118 +50,12 @@ import { parseArgs, buildBrowserArgs, USAGE } from "./launch-args.mjs";
  */
 export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.argv.slice(2), env = process.env } = {}) {
   const opts = parseArgs(argv);
-  const { exe, args, userDataDir, ephemeralUserDataDir } = buildBrowserArgs(opts, env);
-
-  const cdp = spawn({
-    exe,
-    args,
-    name: opts.namespace,
-    timeoutMs: opts.timeoutMs,
-    env: opts.extraEnv ? { ...env, ...opts.extraEnv } : env,
-  });
-
-  // 档案是**会话级**的:浏览器起来了才建得了 browser context(`persona`/`disposable`),
-  // 所以这一步必须在 `spawn` 之后 —— 也是 `--profile-kind` 真正落到浏览器侧的唯一时刻。
-  // 建档案失败时浏览器已经起了,不能就这么扔下 —— 先关掉它再抛(不留孤儿进程)。
-  let session;
+  const session = await openSession({ opts, env, spawn, browser: buildBrowserArgs(opts, env) });
   try {
-    session = await openSessionProfiles({
-      cdp,
-      kind: opts.profileKind,
-      userDataDir: opts.userDataDir,
-      // 出口绑在**会话档案**上(F13):只有 persona/disposable 会由 `createBrowserContext` 带 `proxyServer`。
-      // ⚠️ `real` **不能**传进来 —— 它用默认 context,挂不了 context 级代理,而它的出口已经由
-      // 浏览器级 `--proxy-server` 承担(见 launch-args 的按 kind 分流);传进来只会被档案层抛死,
-      // 于是出现"参数合法、会话起不来"的自相矛盾(2026-10-25 核验指出的 F3)。
-      proxy:
-        opts.profileKind === "persona" || opts.profileKind === "disposable" ? opts.proxy : null,
-    });
-  } catch (err) {
-    await cdp.close();
-    throw err;
-  }
-
-  const registry = createTaskSpaceRegistry();
-  const runtime = createOuUutRuntime({
-    cdp,
-    registry,
-    namespace: opts.namespace,
-    archive: session.archive,
-    profiles: session.profiles,
-    sessionProfileId: session.sessionProfileId,
-  });
-  const previous = globalThis.ouuut;
-  globalThis.ouuut = runtime.api;
-
-  let result;
-  try {
-    result = await run({
-      api: runtime.api,
-      registry,
-      cdp,
-      options: opts,
-      /** 脚本跑完后要把 harness 的回调摘掉,交给它 */
-      async disposeHarness() {
-        try {
-          const mod = await import(resolveHarnessEntry("index.js", { env }));
-          if (typeof mod.disposeEgoSdk === "function") await mod.disposeEgoSdk();
-        } catch {
-          // harness 没构建 / 没这个导出:不影响收尾
-        }
-      },
-    });
+    return await run({ api: session.api, registry: session.registry, cdp: session.cdp, options: opts });
   } finally {
-    // **收尾顺序**:先摘回调 → 再销毁 disposable 档案 → 还原 globalThis → 最后关进程。
-    // 反过来的话,浏览器关掉后 harness 还可能在回调里发命令,会拿到一堆通道关闭错误;
-    // 而档案的销毁**必须在关进程之前**(要往还活着的管道上发 `Target.disposeBrowserContext`)。
-    try {
-      await runtime.dispose?.();
-    } finally {
-      // **成败都要走**:disposable 用完即弃(ADR-007),异常退出也不能把它留在磁盘里。
-      await session.dispose?.();
-      if (previous === undefined) delete globalThis.ouuut;
-      else globalThis.ouuut = previous;
-      await cdp.close();
-      // **用完即弃**:会话专用的临时档案目录不该留在磁盘上。
-      // (2026-10-25 核验实测:每跑一次 CLI 就留一个,`%TEMP%` 里累计到 88 个 —— 与 ADR-007 里
-      //  「disposable 用完即弃」的说法矛盾。)
-      // 顺序:必须在 `cdp.close()` **之后** —— 浏览器还在跑时删它的档案目录是白删/半删。
-      if (ephemeralUserDataDir) await removeSessionUserDataDir(userDataDir, opts.namespace);
-    }
+    await session.close();
   }
-  return result;
-}
-
-/**
- * 删掉**本会话专用的**临时档案目录。
- *
- * **尽力而为,而且只报不抛**:浏览器刚退出时它的孙子进程可能还占着文件(坑-27),
- * 为了一次清理失败把一场正常会话判成失败,不值得。
- *
- * ⚠️ 已知后果(2026-10-25 核验实测):**可能只删成"空壳"** —— 能删的文件删掉、
- * 被占住的那个子目录留下(`EBUSY`)。所以失败消息里明说这一点,别让人以为目录一定干净了。
- * ⚠️ 调用方显式给的档案目录**绝不删** —— 那是使用者的身份,由 `ephemeralUserDataDir` 把关。
- */
-export async function removeSessionUserDataDir(dir, namespace = "ouuut") {
-  const { rm } = await import("node:fs/promises");
-  // 两次尝试、每次只留一点余量:失败路径**不该拖慢收尾**。
-  // (第一版 3 次 × 内建重试给失败路径加了约 6 秒 —— 核验实测 6219 ms。)
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    try {
-      await rm(dir, { recursive: true, force: true, maxRetries: 1, retryDelay: 100 });
-      return true;
-    } catch (err) {
-      if (attempt === 2) {
-        process.stderr.write(
-          `[${namespace}] 会话临时档案目录没清干净(${dir}):${err?.message ?? err}\n` +
-            `  可能有孙子进程还占着文件(坑-27);目录可能只删成空壳,不影响本次会话\n`,
-        );
-        return false;
-      }
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
-  return false;
 }
 
 /**
