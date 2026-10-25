@@ -62,9 +62,12 @@ export async function withRuntime({ run, spawn = spawnCdpPipe, argv = process.ar
       cdp,
       kind: opts.profileKind,
       userDataDir: opts.userDataDir,
-      // 出口绑在**会话档案**上(F13):persona/disposable 由 createBrowserContext 带 `proxyServer`;
-      // `real` 走浏览器级 `--proxy-server`(见 launch-args 的按 kind 分流)。
-      proxy: opts.proxy,
+      // 出口绑在**会话档案**上(F13):只有 persona/disposable 会由 `createBrowserContext` 带 `proxyServer`。
+      // ⚠️ `real` **不能**传进来 —— 它用默认 context,挂不了 context 级代理,而它的出口已经由
+      // 浏览器级 `--proxy-server` 承担(见 launch-args 的按 kind 分流);传进来只会被档案层抛死,
+      // 于是出现"参数合法、会话起不来"的自相矛盾(2026-10-25 核验指出的 F3)。
+      proxy:
+        opts.profileKind === "persona" || opts.profileKind === "disposable" ? opts.proxy : null,
     });
   } catch (err) {
     await cdp.close();

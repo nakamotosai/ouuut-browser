@@ -253,7 +253,14 @@ export function createOuUutRuntime({
 
   /** `nav.ts:159-162` 只读 `result.targetId`,没有就抛「newTab returned no targetId」。 */
   runtime.createTab = async function createTab(url = "about:blank") {
-    const res = await cdp.send("Target.createTarget", { url }, { timeoutMs: VERSION_TIMEOUT_MS });
+    // ⚠️ **页面要建在会话档案自己的 context 里**,否则那个 context 绑的出口/隔离全落空。
+    // (`real` 的 context id 是 `null` ⇒ 省略参数 = 默认 context,这是 Chrome 的寻址方式。)
+    const contextId = archive && sessionProfileId ? archive.browserContextFor(sessionProfileId) : null;
+    const res = await cdp.send(
+      "Target.createTarget",
+      { url, ...(contextId ? { browserContextId: contextId } : {}) },
+      { timeoutMs: VERSION_TIMEOUT_MS },
+    );
     if (typeof res?.targetId !== "string" || res.targetId.length === 0) {
       throw new OuUutRuntimeError("Target.createTarget 没返回 targetId", "OUUUT_CREATE_TAB_FAILED");
     }

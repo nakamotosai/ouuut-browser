@@ -260,9 +260,16 @@ export function createArchive({ profiles = [] } = {}) {
      * `browserContextId` **由句柄自动注入**,调用方**没有参数**能覆盖它 ——
      * 这是结构性的,不依赖调用方守规矩。
      */
-    /** **内部用**:该档案绑的代理原文(含凭据)。除了丢给 Chrome,别处一律用 `listProfiles()` 里那份脱敏的。 */
-    proxyFor(profileId) {
-      return require(profileId)._proxy;
+    /**
+     * 该档案对应的 **browser context id**(`real` 是 `null` = 默认 context)。
+     *
+     * 调用方:运行时的 `createTab` —— **页面必须建在档案自己的 context 里**,
+     * 否则那个 context 上绑的代理/隔离全都落空(2026-10-25 抓到过:persona + `--proxy`
+     * 因为页面落在默认 context 而**静默直连**)。返回 `null` 时调用方应**省略**该参数
+     * (Chrome 用「省略」寻址默认 context,见 normalizeProfile 里的真机实测)。
+     */
+    browserContextFor(profileId) {
+      return require(profileId)._browserContextId;
     },
 
     cookiesFor(profileId, send) {

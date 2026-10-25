@@ -76,11 +76,13 @@ export function parseProxy(url) {
  */
 export function redactProxy(text) {
   if (typeof text !== "string" || text === "") return text;
-  return text
-    .replace(
-      /([a-z][a-z0-9+.-]*:\/\/)[^\s/@]*@/gi,
-      "$1***@",
-    );
+  return (
+    text
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]*@/gi, "$1***@")
+      // 兜底:**Chrome 的 `--proxy-server` 也收没有 scheme 的 `user:pass@host:port`**
+      // (实测这种形状的代理确实会生效),而它同样会出现在诊断的启动参数与 stderr 里。
+      .replace(/(^|[\s=])([^\s/@:=]+:[^\s/@]*@)/g, "$1***@")
+  );
 }
 
 /** 启动参数数组 → **可打印**的一行(代理凭据脱敏)。诊断/报错一律用这个。 */

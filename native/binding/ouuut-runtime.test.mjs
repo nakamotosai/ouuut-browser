@@ -198,3 +198,37 @@ test("放行名单里的命令**照常**走到管道(守卫不能把功能一起
   const res = await got;
   assert.ok(res, "合法命令必须能拿到响应");
 });
+
+// ---- 页面必须建在会话档案的 context 里(F13 的前提)------------------------
+
+test("★ createTab:会话档案有 browserContextId 时,建页必须带它(否则那个 context 的出口/隔离全落空)", async () => {
+  const { createOuUutRuntime } = await import("./ouuut-runtime.mjs");
+  const { createArchive } = await import("./archive.mjs");
+  const sent = [];
+  const cdp = {
+    onRaw: () => () => {},
+    send: async (method, params) => {
+      sent.push({ method, params });
+      if (method === "Target.createTarget") return { targetId: "T-1" };
+      return {};
+    },
+    sendRaw: () => {},
+  };
+  const archive = createArchive({
+    profiles: [
+      { id: "real", name: "真实档案", kind: "real" },
+      { id: "persona", name: "画像", kind: "persona", browserContextId: "CTX-A" },
+    ],
+  });
+  const rt = createOuUutRuntime({ cdp, archive, sessionProfileId: "persona" });
+  await rt.api.createTab("https://example.com");
+  const created = sent.find((c) => c.method === "Target.createTarget");
+  assert.equal(created.params.browserContextId, "CTX-A", "页必须落在档案的 context 里");
+  assert.equal(created.params.url, "https://example.com");
+
+  // 对照:`real` = 默认 context,**必须省略**该参数(Chrome 用省略寻址默认 context)
+  const rt2 = createOuUutRuntime({ cdp, archive, sessionProfileId: "real" });
+  await rt2.api.createTab("about:blank");
+  const created2 = sent.filter((c) => c.method === "Target.createTarget").at(-1);
+  assert.ok(!("browserContextId" in created2.params), "real 会话不许带 browserContextId(带了会被拒)");
+});
