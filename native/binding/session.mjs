@@ -78,8 +78,13 @@ export async function openSession({
     profiles: session.profiles,
     sessionProfileId: session.sessionProfileId,
   });
-  const previous = installGlobal ? globalThis[opts.namespace ?? "ouuut"] : undefined;
-  if (installGlobal) globalThis[opts.namespace ?? "ouuut"] = runtime.api;
+  // ⚠️ 随包的 harness **硬编码**读 `globalThis.ouuut`(`dist/src/helpers.js`),它不认识别的名字。
+  // 所以 `--namespace foo` 不能只装 `foo`:那样脚本里 `taskSpace()` 会拿到 harness 自己的替补,
+  // 报一句 `listTaskSpaces requires ego.listTaskSpaces`(2026-10-25 实测),而错误信息完全指不到自定义命名空间。
+  // ⇒ **两个名字都装**:`ouuut` 是给 harness 的,`<namespace>` 是给脚本的。
+  const globalNames = installGlobal ? [...new Set([opts.namespace ?? "ouuut", "ouuut"])] : [];
+  const previous = new Map(globalNames.map((n) => [n, globalThis[n]]));
+  for (const n of globalNames) globalThis[n] = runtime.api;
 
   let closed = false;
   const close = async () => {
@@ -93,9 +98,10 @@ export async function openSession({
       } finally {
         // **成败都要走**:disposable 用完即弃(ADR-007),异常退出也不能把它留在磁盘里。
         await session.dispose?.();
-        if (installGlobal) {
-          if (previous === undefined) delete globalThis[opts.namespace ?? "ouuut"];
-          else globalThis[opts.namespace ?? "ouuut"] = previous;
+        for (const n of globalNames) {
+          const before = previous.get(n);
+          if (before === undefined) delete globalThis[n];
+          else globalThis[n] = before;
         }
         await cdp.close();
         // **用完即弃**:会话专用的临时档案目录不该留在磁盘上。

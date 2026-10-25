@@ -61,6 +61,9 @@ const REQUIRED_IN_MANIFEST = [
   { label: "原生层 CLI", path: "js/native/bin/ouuut.mjs" },
   { label: "harness 入口", match: (p) => p.startsWith("js/harness/package/ego-browser/dist/src/") },
   { label: "harness 的第三方依赖 acorn", match: (p) => p.includes("node_modules/acorn/") },
+  { label: "服务端入口(HTTP/WS)", path: "js/native/bin/ouuut-serve.mjs" },
+  { label: "服务端入口(MCP stdio)", path: "js/native/bin/ouuut-mcp.mjs" },
+  { label: "服务端实现", path: "js/native/serve/mcp.mjs" },
   { label: "浏览器可执行文件", path: "chrome.exe" },
 ];
 

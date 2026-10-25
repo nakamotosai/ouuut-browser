@@ -41,7 +41,8 @@ export const USAGE = `ouuut —— 自带 Chromium 的 agent 浏览器
   --script <path>         从**文件**读脚本(替代 stdin)。给程序化调用方用:
                           「--script」时我们**完全不碰 stdin**,调用方可以拿它做自己的协议
   --timeout <seconds>     单条 CDP 消息的超时(默认 30)
-  --namespace <name>      注入的全局名(默认 ouuut)
+  --namespace <name>      额外注入的全局名(默认 ouuut)。⚠️ 随包的 harness 只认 globalThis.ouuut,
+                          所以我们两个名字都装:ouuut 给 harness,<name> 给脚本
   --headless              无头(默认有头 —— 与上游一致)
   --profile-kind <kind>   档案种类:real / persona / disposable(F11 的三种档案)。
                           real 必须显式给出档案目录 —— 那是使用者的真实身份,

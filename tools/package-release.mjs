@@ -167,6 +167,13 @@ process.exit(await cli());
 const JS_DIRS = [
   { from: "native/bin", to: "js/native/bin", keep: (n) => n.endsWith(".mjs") && !n.endsWith(".test.mjs") },
   { from: "native/binding", to: "js/native/binding", keep: (n) => n.endsWith(".mjs") && !n.endsWith(".test.mjs") },
+  // 服务端两个入口(P5)也随包发 —— 它们只是把同一套原生层换个传输露出来。
+  // `fixtures.mjs` 是测试夹具,不发。
+  {
+    from: "native/serve",
+    to: "js/native/serve",
+    keep: (n) => n.endsWith(".mjs") && !n.endsWith(".test.mjs") && n !== "fixtures.mjs",
+  },
   { from: "harness/package/ego-browser/dist", to: "js/harness/package/ego-browser/dist", keep: () => true },
   {
     from: "harness/package/ego-browser/node_modules/acorn",

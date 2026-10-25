@@ -50,6 +50,26 @@ node <发布目录>/payload/ouuut.mjs nodejs --script 脚本.mjs [--headless]
 
 `--script` 也可以换成 stdin heredoc(`ouuut nodejs <<'JS' ... JS`)。代理、档案、窗口等开关见 `--help`。
 
+### 三个入口(P5)
+
+同一个浏览器、同一套原生层,三种驱动方式;**快照文本一致**(由 `tools/verify-three-entries.mjs` 守着):
+
+```bash
+# 1) CLI:跑一段脚本(harness 那条路)
+node native/bin/ouuut.mjs nodejs --script 脚本.mjs [--headless]
+
+# 2) HTTP + WebSocket:长期持有会话,默认只听 127.0.0.1 且**必须有令牌**(没给就现生成并打印)
+node native/bin/ouuut-serve.mjs --headless [--port 8788]
+#   GET /health · GET /version · GET /tabs · POST /goto {url} · GET|POST /snapshot · POST /close
+#   鉴权:Authorization: Bearer <token> 或 ?token=<token>(WS 同源、同样要令牌)
+
+# 3) MCP stdio:给 agent 宿主用(JSON-RPC over stdio;stdout 只走协议)
+node native/bin/ouuut-mcp.mjs --headless
+#   工具:browser_goto / browser_snapshot / browser_tabs / browser_version
+```
+
+⚠️ 服务端驱动的是**带身份的真浏览器**:默认只绑 loopback、必须带令牌;`--no-auth` 只在 loopback 下允许。
+
 发布包**自带** JS(入口 `ouuut.mjs` + `js/` 下的原生层与 harness),且这些文件**进清单与签名** ——
 形态与理由见 **ADR-017**。验收(会验签 + 逐文件哈希 + 冷启动,`--smoke` 还会真开一次浏览器):
 
