@@ -28,8 +28,9 @@ P10 异路径变体 ──► P11 干净 VM 全量重建
 P12 公开化 + 发 0.1.4
 ```
 
-**「没有第二台机器」不再是阻塞**:真服务器用已有的 `vps-jp`(真 Ubuntu 24.04 aarch64);
-可复现构建用「异盘符/异路径变体(约 4 小时机时)+ Hyper-V 干净 VM」替代 —— 两者都在已有设备上闭合。
+**「没有第二台机器」不再是需要买机器的理由**:真服务器用已有的 `vps-jp`(真 Ubuntu aarch64);
+可复现构建用「异盘符/异路径变体(约 4 小时机时)+ Hyper-V 干净 VM」替代 —— 全部在已有设备上闭合。
+⚠️ 但 `R2`(干净 VM)没做之前,`docs/里程碑.md` M7 里「第三方可复现构建」**保持未完成**(ADR-016 的硬条件)。
 
 ---
 
@@ -107,7 +108,8 @@ snapshot = 454 字符,含 heading "hello ouuut" / button "pay now"
 见 `docs/里程碑.md`(唯一正本)。当前:
 
 - **骨架** — ✅ 已验收(GitHub `nakamotosai/ouuut-browser` private / Gitea `sai/ouuut-browser` private)
-- **M0 取证** — ✅ 核心目标达成(F17 = ADR-012);Turnstile 探针 / creepjs 校准 / 机房出口为遗留
+- **M0 取证** — ✅ 核心目标达成(F17 = ADR-012);**Turnstile 探针 / creepjs 口径 / 机房出口三条均已落地**
+  (逐轮实测与「能说到什么 / 不能说到什么」见 `docs/里程碑.md` M0 与 `docs/M0-结论.md`)
 - **M1 底座** — ✅ 可复现(全量构建 + 补丁 0004 实测生效,见 `docs/坑与解法.md` 坑-29)
 - **M2 harness** — ✅ 多帧快照(OOPIF 真取树)· list 角色诚实 · `maxResultLength` 按重要性挑选
 - **M3 档案引擎** — ✅ 三种 kind(real / persona / disposable)+ 硬隔离

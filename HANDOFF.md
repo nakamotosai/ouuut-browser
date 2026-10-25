@@ -10,7 +10,7 @@
 ## 一句话现状
 
 装好的 0.1.3 能验签安装、能起浏览器(CDP 走命名管道,不开端口)、能建标签页、
-能出带真文本的快照。全量回归 **306/306**,公开化闸 **0 违规(304 个受控文件)**。
+能出带真文本的快照。全量回归 **306/306**,公开化闸 **0 违规(305 个受控文件)**。
 
 ```
 version  = Chrome/156.0.8078.47
@@ -25,7 +25,7 @@ snapshot = 454 字符 → heading "hello ouuut" / button "pay now"
 | 命令 | 真实返回 |
 |---|---|
 | `node --test native/binding/*.test.mjs native/bin/*.test.mjs` | `# tests 306 / # pass 306 / # fail 0`(约 3.5 s) |
-| `node tools/check-public-ready.mjs` | `✅ 可以公开:检查了 304 个受版本控制的文件,没有 ADR-010 材料或密钥` |
+| `node tools/check-public-ready.mjs` | `✅ 可以公开:检查了 305 个受版本控制的文件,没有 ADR-010 材料或密钥`(该轮为 304;本轮新增 `docs/下一步方案.md` 后为 305) |
 | 安装(`native/bin/ouuut-install.mjs`,验签后落地) | `493` 个文件 → `F:\apps\ouuut-browser\0.1.3`(盘上 494 = 493 + 运行时 `debug.log`) |
 | 冒烟(`.logs\run-smoke.ps1 -Script .logs\smoke.js`) | `has hello = true` / `has pay now = true` / `EXITCODE=0` |
 | `git log --oneline` | 头 = `3dec593`(收口后) |
@@ -151,7 +151,7 @@ ssh vps-jp 'rm -rf /tmp/ouuut-linuxcheck && mkdir -p /tmp/ouuut-linuxcheck \
 | 无头「没跑过」 | **跑过**(冒烟脚本就是 `--headless`) |
 | `9eab757` 是「M7 之前」 | 它就是 **M7 本体**;之前是 `2f077ad` |
 | `out/` 已清空 | **在 `chromium/src/out/Release`,26 GB,没删** |
-| 受控文件 303 / 300 | 现为 **304** |
+| 受控文件 303 / 300 | 该轮核实为 **304**(本轮新增 `docs/下一步方案.md` 后为 **305**) |
 | HEAD `69ceffb` | 现为 **`3dec593`** |
 | `e4534f4`「303→312 用例」 | 该提交全量 306 条,2 条红 |
 | `release.test.mjs` 19 条 | **26 条** |
@@ -183,6 +183,6 @@ ssh vps-jp 'rm -rf /tmp/ouuut-linuxcheck && mkdir -p /tmp/ouuut-linuxcheck \
 | `vps-jp` 是真 Linux 服务器 | Ubuntu 24.04.5 · aarch64 · 4 vCPU · 24 GB · Node v24.22.1 · `chromium`(snap)+ `docker` 已装 | `ssh vps-jp 'uname -a; nproc; free -m; df -h'` |
 | **Linux 上的测试基线** | **`306 条 / 298 过 / 2 红 / 6 跳过`** | `git archive HEAD` → `scp` → `node --test native/binding/*.test.mjs native/bin/*.test.mjs` |
 | 2 条红的位置与性质 | `cdp-pipe.test.mjs:186`、`task-spaces.test.mjs:167`,均 `ECONNRESET` ⇒ **通道片** | 同上 |
-| 6 条 skip 的性质 | `skip: process.platform !== "win32"` 的平台门(命名管道往返等) | `grep skip: native/binding/*.test.mjs` |
-| 本机可用的替代算力 | 24 逻辑核 / 32 GB RAM;`C:` 653.8 GB、`D:` 934.8 GB、**`E:` 5474.3 GB** 空闲;`vmcompute` 已 Running;Sandbox 未启用;WSL 未装发行版 | `Get-ComputerInfo` / `Get-PSDrive` / `Test-Path` |
+| 6 条 skip 的性质 | **2 条平台门**(`skip: process.platform !== "win32"` —— `cdp-pipe.test.mjs:250/264`)+ **4 条 `t.skip("harness dist 未构建")`**(`ouuut-runtime.test.mjs:59,70,83,94`) | `node --test` 的 TAP `# SKIP` 行 + `grep -n "t.skip" native/binding/ouuut-runtime.test.mjs` |
+| 本机可用的替代算力 | 24 逻辑核 / 32 GB RAM;`C:` ≈654 GB(系统盘,随用漂移)、`D:` 934.8 GB、**`E:` 5474.3 GB** 空闲;`vmcompute` 已 Running;Sandbox 未启用;WSL 未装发行版 | `Get-ComputerInfo` / `Get-PSDrive` / `Test-Path` |
 | POSIX 侧 fd 号(写计划前已核对,不是推测) | **fd 3 读 / fd 4 写** | `chromium/src/content/browser/devtools/devtools_agent_host_impl.cc:269-270`(`kReadFD`/`kWriteFD`,Windows 分支走 `--remote-debugging-io-pipes`) |
