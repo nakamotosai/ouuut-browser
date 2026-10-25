@@ -14,15 +14,16 @@ ego 是"一次一进程、靠持久化 TaskSpace 接回上次的页面";我们�
 本适配器改成:**起一个长驻 CLI 进程**,`--script <file>` 喂驱动脚本,然后:
 
     命令  →  追加进一个 `.jsonl` 文件(驱动**轮询**它)
-    结果  ←  stdout 上的 `__PROBE_JSON__{...}` 一行
+    结果  ←  驱动用 `fs.appendFileSync` 写进另一个 `.jsonl`(Python 侧按 offset 轮询)
 
-⚠️ **为什么命令不走 stdin**(2026-10-25 实测,踩了两次才定位):
-CLI 在 **stdin 到达 EOF 之前不会开始干活** —— 即使脚本是用 `--script` 从文件读的也一样。
-证据:同一份命令,`< 文件`(立刻 EOF)2 秒内就回;而"管道保持打开"(命令早就写进去了)要**等到
-20 秒后管道关闭**才回。所以我们**必须**给子进程一个会立刻 EOF 的 stdin(`DEVNULL`),
-另找一条通道传命令 —— 就是那个被轮询的文件。
-(踩坑顺序也值得记:第一版用 stdin 行协议 → 探针一声不响地挂住;中间还误判过一次
-"stderr 管道没人读导致死锁",那是**错**的:改成 `STDOUT` 合并后照样挂。)
+⚠️ **为什么不走 stdin / stdout**(2026-10-25 实测 + 源码定位;我先把机制判错过两次,详见 `docs/坑与解法.md` 坑-38):
+1. **脚本从 stdin 读时,CLI 必须读到 EOF 才开工** —— 管道保持打开就没有回应。
+   (注意:这条**只对 stdin 那条路**成立;`--script` 时不碰 stdin,也不等它)。
+2. **长驻脚本里的 `console.*` 不会落地**:harness 的 output sink 把它缓冲到**脚本结束**才 flush
+   (`dist/src/run.js` 的 `resetSink`/`flushSink` + `dist/src/output-sink.js`),
+   所以"长驻 + console.log"是**收不到**的 —— 与 stdout 是管道还是文件**无关**。
+   要实时,必须 `fs.writeSync(1, ...)` 或像这里一样直接写结果文件。
+所以:stdin 给 `DEVNULL`(立刻 EOF),命令与结果**都走文件**,stdout/stderr 只用来留现场日志。
 
 ## 与 probe 契约的两处**有意偏离**(照实记)
 
@@ -43,7 +44,10 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
+import signal
 import subprocess
+import tempfile
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -130,7 +134,7 @@ class OuUutFacade:
     # ---- 行协议 --------------------------------------------------------------
 
     def _read_result(self) -> str | None:
-        """结果行从 `reslog` 里读(**不走 stdout** —— 见文件头那段血泪)。返回 None = 暂时没有。"""
+        """结果行从 `reslog` 里读(**不走 stdout**:长驻脚本的 `console.*` 会被 harness 缓冲到脚本结束才 flush,见文件头)。返回 None = 暂时没有。"""
         try:
             text = self.reslog.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -143,6 +147,38 @@ class OuUutFacade:
             if line.startswith(MARK):
                 return line[len(MARK) :]
         return ""
+
+    def _kill_tree(self) -> None:
+        """杀掉 CLI **及其整棵进程树**,并尽力清掉它的会话临时档案目录。
+
+        ⚠️ **只 kill CLI 是不够的**:浏览器是它 spawn 出来的子进程,CLI 一被杀,
+        收尾路径(关浏览器 + 删临时档案目录)**根本不会执行** —— 于是留下一棵孤儿进程树,
+        还占着那个目录(2026-10-25 实测:一次被强杀的调试运行留下 主进程 + crashpad + GPU + 5 个 renderer,
+        目录 `ouuut-session-14536` 因此删不掉,`EBUSY`)。见 `docs/坑与解法.md` 坑-39。
+        """
+        pid = getattr(self.proc, "pid", None)
+        if pid is None:
+            return
+        with contextlib.suppress(Exception):
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    capture_output=True,
+                    timeout=20,
+                    check=False,
+                )
+            else:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+        # CLI 用的是"每会话一个临时档案目录"(`<tmp>/ouuut-session-<cli pid>`):
+        # 既然是我们杀掉了它,顺手清掉 —— 别把垃圾留给下一个人。
+        # **要重试**:刚 kill 完那一瞬,文件可能还被握着(实测第一次 rmtree 会 EBUSY 掉)。
+        target = Path(tempfile.gettempdir()) / f"ouuut-session-{pid}"
+        for _ in range(6):
+            if not target.exists():
+                return
+            with contextlib.suppress(Exception):
+                shutil.rmtree(target, ignore_errors=True)
+            time.sleep(0.3)
 
     def _call(self, **cmd: Any) -> Any:
         if self.proc.poll() is not None:
@@ -166,8 +202,7 @@ class OuUutFacade:
                 )
             time.sleep(0.05)
 
-        with contextlib.suppress(Exception):
-            self.proc.kill()
+        self._kill_tree()
         raise ProbeError(
             f"{self.name}:等一条结果超过 {self.timeout}s 还没来 —— 已杀掉 CLI;尾部:{self._tail()}"
         )
@@ -203,8 +238,7 @@ class OuUutFacade:
         with contextlib.suppress(Exception):
             self.proc.wait(timeout=20)
         if self.proc.poll() is None:
-            with contextlib.suppress(Exception):
-                self.proc.kill()
+            self._kill_tree()
 
 
 @contextlib.contextmanager

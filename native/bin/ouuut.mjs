@@ -187,12 +187,34 @@ export async function cli({
   //
   // `--script <path>` 时改从**文件**读,并且**完全不碰 stdin** ——
   // 程序化调用方(如 `probe/targets/ouuut.py`)要拿 stdin 跑自己的行协议。
-  const stdinText =
-    typeof runScript === "function"
-      ? null
-      : opts.script
-        ? await readFile(opts.script, "utf8")
-        : await readStdin(stdin);
+  let stdinText = null;
+  if (typeof runScript !== "function") {
+    if (opts.script) {
+      // 读不到就**就地失败**:给一句人话 + 非零码,而不是把 ENOENT 堆栈甩给调用方
+      // (核验实测过:此前是一条 `Error: ENOENT … at async cli`,虽然也可读,但不是我们的风格)
+      try {
+        stdinText = await readFile(opts.script, "utf8");
+      } catch (err) {
+        process.stderr.write(
+          `[ouuut] 读不到 --script 指向的脚本(${opts.script}):${err?.message ?? err}\n`,
+        );
+        return 2;
+      }
+    } else {
+      stdinText = await readStdin(stdin);
+    }
+  }
+
+  // **空白脚本就地拒绝**。上面那句注释本来就是这个意思,但此前只是"说了"没"做":
+  // 核验实测空文件会 rc=0 起一次浏览器、然后由 harness 打出它自己的 USAGE(2026-10-25)。
+  if (typeof runScript !== "function" && (!stdinText || stdinText.trim() === "")) {
+    process.stderr.write(
+      opts.script
+        ? `[ouuut] --script 指向的文件是空的(${opts.script});没有可执行的脚本\n`
+        : "[ouuut] 没有从 stdin 读到脚本\n",
+    );
+    return 2;
+  }
   await withRuntime({
     argv,
     spawn,

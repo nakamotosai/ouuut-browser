@@ -41,6 +41,41 @@ test("parseArgs:缺值的选项给友好错误,不是堆栈", () => {
 
 // ---- 启动参数:那六项"不要"的守护 ------------------------------------------
 
+test("★ --script 的关键行为:不碰 stdin、坏脚本不许起浏览器", async () => {
+  const { writeFileSync, mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(path.join(tmpdir(), "ouuut-script-"));
+  let spawned = 0;
+  const countingSpawn = (...a) => {
+    spawned += 1;
+    return fakeSpawn(...a);
+  };
+  const sink = { out: "", write(s) { this.out += s; } };
+  try {
+    // 1) 文件不存在 —— 读文件就失败,而且**从来没起过浏览器**
+    const rc1 = await cli({
+      argv: ["nodejs", "--script", path.join(dir, "nope.mjs")],
+      spawn: countingSpawn, stdout: sink, stdin: null,
+    });
+    assert.equal(rc1, 2, "读不到脚本文件:就地失败(2),不是把堆栈甩出来");
+    assert.equal(spawned, 0, "脚本都没读到,不该起浏览器");
+
+    // 2) 空文件 —— 同样不许起(此前会 rc=0 起一次浏览器,再让 harness 打它自己的 USAGE)
+    const empty = path.join(dir, "empty.mjs");
+    writeFileSync(empty, "\n  \n", "utf8");
+    const rc2 = await cli({ argv: ["nodejs", "--script", empty], spawn: countingSpawn, stdout: sink, stdin: null });
+    assert.equal(rc2, 2, "空白脚本应当就地拒绝");
+    assert.equal(spawned, 0, "空白脚本不该起浏览器(见坑-23:硬杀的浏览器会锁住 chrome.dll)");
+
+    // 3) 目录 —— 可读性错误,不许起
+    const rc3 = await cli({ argv: ["nodejs", "--script", dir], spawn: countingSpawn, stdout: sink, stdin: null });
+    assert.equal(rc3, 2, "传目录同样是就地失败(2)");
+    assert.equal(spawned, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("启动参数:绝不含那几项指纹来源(断言,不是装饰)", () => {
   const { args } = buildBrowserArgs({}, {});
   for (const bad of FORBIDDEN_ARGS) {
