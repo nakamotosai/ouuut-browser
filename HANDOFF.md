@@ -26,7 +26,7 @@ snapshot = 454 字符 → heading "hello ouuut" / button "pay now"
 |---|---|
 | `node --test native/binding/*.test.mjs native/bin/*.test.mjs` | `# tests 306 / # pass 306 / # fail 0`(约 3.5 s) |
 | `node tools/check-public-ready.mjs` | `✅ 可以公开:检查了 305 个受版本控制的文件,没有 ADR-010 材料或密钥`(该轮为 304;本轮新增 `docs/下一步方案.md` 后为 305) |
-| 安装(`native/bin/ouuut-install.mjs`,验签后落地) | `493` 个文件 → `F:\apps\ouuut-browser\0.1.3`(盘上 494 = 493 + 运行时 `debug.log`) |
+| 安装(`tools/install-release.mjs` —— **这是真名**;旧文写的 `native/bin/ouuut-install.mjs` 从来不存在) | `493` 个文件 → `F:\apps\ouuut-browser\0.1.3`(盘上 494 = 493 + 运行时 `debug.log`) |
 | 冒烟(`.logs\run-smoke.ps1 -Script .logs\smoke.js`) | `has hello = true` / `has pay now = true` / `EXITCODE=0` |
 | `git log --oneline` | 头 = `3dec593`(收口后) |
 
