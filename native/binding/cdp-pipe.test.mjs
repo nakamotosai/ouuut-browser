@@ -183,6 +183,38 @@ test("★ 诊断:对端有 stderr → 把 stderr 带上(那通常就是原因)",
   assert.ok(!/没有任何输出/.test(d), "有输出时不该说『没有任何输出』");
 });
 
+test("★ stderr 要出现在**抛给调用方**那条错误里(不是只在 diagnoseExit 里)", async (t) => {
+  // 守的契约:调用方 `catch` 到的那条错误里必须已经有对端 stderr,
+  // 否则排查时还得自己再去接一遍。
+  //
+  // 已知局限(实测过,不吹):把组消息的时机从 `close` 退回 `exit`,这条**仍然过** ——
+  // 本机上 stderr 的 data 在 exit 之前就派发完了,时序竞态在这里观察不到。
+  // 所以它守的是「stderr 有没有进错误」,不是「在哪个事件里组消息」。
+  // `exit` 上组消息本身仍按 Node 文档(`close` 才保证 stdio 收完)保守处理。
+  const cdp = spawnCdpPipe({
+    exe: process.execPath,
+    args: ["-e", "process.stderr.write('RACE-MARKER-7f3a\n'); process.exit(3)"],
+    name: "竞态对端",
+    useNamedPipes: false,
+    timeoutMs: 3_000,
+  });
+  t.after(() => cdp.close().catch(() => {}));
+
+  // 立刻发一条 —— 对端会在它完成之前退出,于是 reject 消息由退出路径组装
+  await assert.rejects(
+    () => cdp.send("Page.enable", {}),
+    (e) => {
+      assert.match(
+        e.message,
+        /RACE-MARKER-7f3a/,
+        "退出时组消息必须已经拿到 stderr;拿不到就会误报『没有任何输出』",
+      );
+      assert.ok(!/没有任何输出/.test(e.message), "有输出时不许说『没有任何输出』");
+      return true;
+    },
+  );
+});
+
 test("★ 诊断:对端死了之后再发命令,报错也带诊断(而不是光一句『已退出』)", async (t) => {
   const cdp = spawnCdpPipe({
     exe: process.execPath,

@@ -11,6 +11,7 @@
 //   * 旧版本保留一份,失败可回滚
 
 import { createHash, sign, verify } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { readFile, writeFile, mkdir, rename, rm, cp, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -21,6 +22,8 @@ export const RELEASE_ERRORS = Object.freeze({
   HASH_MISMATCH: "OUUUT_RELEASE_HASH_MISMATCH",
   DOWNGRADE: "OUUUT_RELEASE_DOWNGRADE",
   APPLY_FAILED: "OUUUT_RELEASE_APPLY_FAILED",
+  UNSAFE_PATH: "OUUUT_RELEASE_UNSAFE_PATH",
+  TARGET_EXISTS: "OUUUT_RELEASE_TARGET_EXISTS",
 });
 
 export class ReleaseError extends Error {
@@ -31,10 +34,11 @@ export class ReleaseError extends Error {
   }
 }
 
-/** 计算文件的 sha256(流式,大文件也不吃内存)。 */
+/** 计算文件的 sha256(**真**流式 —— 332 MB 的 chrome.dll 也不会整个进内存)。 */
 export async function sha256File(filePath) {
-  const buf = await readFile(filePath);
-  return createHash("sha256").update(buf).digest("hex");
+  const h = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) h.update(chunk);
+  return h.digest("hex");
 }
 
 /**
@@ -211,6 +215,108 @@ export async function applyUpdate({ dir, plan, fetchBlob } = {}) {
     await rm(staging, { recursive: true, force: true }).catch(() => {});
     if (err instanceof ReleaseError) throw err;
     throw new ReleaseError(`应用更新失败:${err?.message ?? err}`, {
+      code: RELEASE_ERRORS.APPLY_FAILED,
+      cause: err,
+    });
+  }
+}
+
+/**
+ * 清单里的路径必须是**相对、不含 `..`、不带盘符**。
+ *
+ * 这条不是洁癖:安装时按 `path.join(dir, f.path)` 落盘,一个 `../../` 就能写到
+ * 安装目录外面去 —— 和压缩包里的 zip-slip 是同一类问题。清单本身是签过名的,
+ * 但**签名只证明"是我们发的",不证明"内容是安全的"**(发版脚本也可能出错)。
+ */
+function assertSafeRelPath(p) {
+  const s = String(p ?? "").replace(/\\/g, "/");
+  const bad =
+    s === "" ||
+    s.startsWith("/") ||
+    /^[A-Za-z]:/.test(s) ||
+    s.split("/").some((seg) => seg === "" || seg === "." || seg === "..");
+  if (bad) {
+    throw new ReleaseError(`清单里有不安全的路径:${JSON.stringify(p)}`, {
+      code: RELEASE_ERRORS.UNSAFE_PATH,
+    });
+  }
+  return s;
+}
+
+/**
+ * **首次安装**。第三方拿到的就是这个流程 —— 目标目录还不存在,没有"当前清单"可比。
+ *
+ * 与 `applyUpdate` 的区别只在起点:那条路是"已有安装 → 换掉变化的文件",
+ * 这条路是"空地 → 铺满"。**纪律完全相同**:验签 → 暂存 → 逐文件校验 → 一次性换名。
+ *
+ * @param {object} o
+ * @param {string} o.dir 安装到哪(必须**不存在**)
+ * @param {object} o.manifest 已签名的清单
+ * @param {string} o.signatureBase64
+ * @param {string} o.publicKeyPem
+ * @param {(file: {path, sha256}) => Promise<Buffer>} o.fetchBlob
+ */
+export async function installRelease({
+  dir,
+  manifest,
+  signatureBase64,
+  publicKeyPem,
+  fetchBlob,
+} = {}) {
+  if (typeof dir !== "string" || dir === "") {
+    throw new ReleaseError("installRelease 需要 dir", { code: RELEASE_ERRORS.APPLY_FAILED });
+  }
+  if (typeof fetchBlob !== "function") {
+    throw new ReleaseError("installRelease 需要 fetchBlob", { code: RELEASE_ERRORS.APPLY_FAILED });
+  }
+
+  // 1) 先验签 —— 验不过连暂存区都不建
+  verifyManifest(manifest, signatureBase64, publicKeyPem);
+
+  const files = manifest?.files;
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new ReleaseError("清单里没有文件", { code: RELEASE_ERRORS.MANIFEST_TAMPERED });
+  }
+  for (const f of files) assertSafeRelPath(f.path);
+
+  // 2) 目标已存在就不装 —— 覆盖已有安装是**更新**的职责,别混在一起
+  try {
+    await stat(dir);
+    throw new ReleaseError(`目标目录已存在,首次安装不覆盖:${dir}`, {
+      code: RELEASE_ERRORS.TARGET_EXISTS,
+    });
+  } catch (err) {
+    if (err instanceof ReleaseError) throw err;
+    // 不存在 → 正是要的情况
+  }
+
+  const staging = `${dir}.staging-${process.pid}`;
+  try {
+    await rm(staging, { recursive: true, force: true });
+    await mkdir(staging, { recursive: true });
+
+    // 3) 边写边校验;任何一个不符就整体放弃
+    for (const f of files) {
+      const buf = await fetchBlob(f);
+      const got = createHash("sha256").update(buf).digest("hex");
+      if (got !== f.sha256) {
+        throw new ReleaseError(`文件 ${f.path} 哈希不符(期望 ${f.sha256},实际 ${got})`, {
+          code: RELEASE_ERRORS.HASH_MISMATCH,
+        });
+      }
+      const target = path.join(staging, f.path);
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, buf);
+    }
+
+    // 4) 一次性换名 —— 到这一步之前,目标位置什么都不存在
+    await mkdir(path.dirname(dir), { recursive: true });
+    await rename(staging, dir);
+    return { installed: true, version: manifest.version, files: files.length };
+  } catch (err) {
+    await rm(staging, { recursive: true, force: true }).catch(() => {});
+    if (err instanceof ReleaseError) throw err;
+    throw new ReleaseError(`安装失败:${err?.message ?? err}`, {
       code: RELEASE_ERRORS.APPLY_FAILED,
       cause: err,
     });

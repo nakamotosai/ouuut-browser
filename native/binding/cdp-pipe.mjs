@@ -280,14 +280,33 @@ export function spawnCdpPipe({
   child.on("error", (err) => {
     failAll(new CdpPipeError(`起 ${name} 失败:${err.message}`, { cause: err }));
   });
-  child.on("exit", (code, signal) => {
+
+  // **不要在 `exit` 上直接判定** —— 见 docs/坑与解法.md 坑-29 的补充:
+  // `exit` 触发时 stderr 的最后一段 `data` 可能**还没派发**,于是诊断会说
+  // 「没有任何输出」,而浏览器其实打印了原因(2026-10-25 实测:那条
+  // `Remote debugging pipe file descriptors are not open.` 就是这么被吞掉的)。
+  //
+  // 正确做法:等 `close`(stdio 全部收完)再组消息。但 `close` 也可能因为
+  // 某个孙子进程还占着句柄而永远不来,所以给一个兜底定时器,不让人白等。
+  let exitTimer = null;
+  const failWithExit = () => {
+    if (closed) return; // `close` 与兜底定时器都会走到这,只认第一次
     closed = true;
-    exitInfo = { code, signal };
     failAll(
       new CdpPipeError(`${diagnoseExit()} —— 未完成的 CDP 请求全部作废`, {
         code: "OUUUT_CDP_PIPE_CLOSED",
       }),
     );
+  };
+
+  child.on("exit", (code, signal) => {
+    exitInfo = { code, signal };
+    exitTimer = setTimeout(failWithExit, 2000);
+    exitTimer.unref?.();
+  });
+  child.on("close", () => {
+    clearTimeout(exitTimer);
+    failWithExit();
   });
 
   function send(method, params = {}, { timeoutMs: t = timeoutMs, sessionId } = {}) {

@@ -18,6 +18,7 @@ import {
   planUpdate,
   applyUpdate,
   rollbackUpdate,
+  installRelease,
   sha256File,
   ReleaseError,
   RELEASE_ERRORS,
@@ -262,4 +263,143 @@ test("sha256File 与实际内容一致", async (t) => {
   const f = path.join(dir, "x.bin");
   await writeFile(f, "hello");
   assert.equal(await sha256File(f), sha(Buffer.from("hello")));
+});
+
+// ---- 6. 首次安装(第三方走的路)--------------------------------------------
+
+const otherPrivPem = otherKeys.privateKey.export({ type: "pkcs8", format: "pem" });
+
+async function signedPackage(blobs, version = "1.0.0", key = privPem) {
+  const manifest = buildManifest({
+    version,
+    files: Object.entries(blobs).map(([p, b]) => fileRec(p, b)),
+  });
+  return { manifest, signatureBase64: signManifest(manifest, key) };
+}
+
+test("★ installRelease:验签通过 → 文件全部到位、内容逐字节一致", async () => {
+  const root = await tmpDir();
+  const target = path.join(root, "app");
+  const blobs = { "chrome.exe": Buffer.from("EXE"), "locales/zh-CN.pak": Buffer.from("PAK") };
+  const pkg = await signedPackage(blobs);
+
+  const r = await installRelease({
+    dir: target,
+    ...pkg,
+    publicKeyPem: pubPem,
+    fetchBlob: async (f) => blobs[f.path],
+  });
+
+  assert.equal(r.installed, true);
+  assert.equal(r.files, 2);
+  assert.equal(await readFile(path.join(target, "chrome.exe"), "utf8"), "EXE");
+  assert.equal(await readFile(path.join(target, "locales/zh-CN.pak"), "utf8"), "PAK");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("★ installRelease:签名不对 → 目标目录根本没被创建,暂存区也没留下", async () => {
+  const root = await tmpDir();
+  const target = path.join(root, "app");
+  const blobs = { "chrome.exe": Buffer.from("EXE") };
+  const pkg = await signedPackage(blobs, "1.0.0", otherPrivPem); // 换了一把私钥
+
+  await assert.rejects(
+    installRelease({
+      dir: target,
+      ...pkg,
+      publicKeyPem: pubPem,
+      fetchBlob: async (f) => blobs[f.path],
+    }),
+    (err) => err.error_code === RELEASE_ERRORS.BAD_SIGNATURE,
+  );
+
+  assert.deepEqual(await readdir(root), [], "验签失败时连暂存区都不该出现");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("★ installRelease:目标已存在 → 拒绝,不覆盖(覆盖是更新的职责)", async () => {
+  const root = await tmpDir();
+  const target = path.join(root, "app");
+  await mkdir(target, { recursive: true });
+  await writeFile(path.join(target, "old.txt"), "旧内容");
+
+  const blobs = { "chrome.exe": Buffer.from("EXE") };
+  const pkg = await signedPackage(blobs);
+
+  await assert.rejects(
+    installRelease({ dir: target, ...pkg, publicKeyPem: pubPem, fetchBlob: async (f) => blobs[f.path] }),
+    (err) => err.error_code === RELEASE_ERRORS.TARGET_EXISTS,
+  );
+  assert.equal(await readFile(path.join(target, "old.txt"), "utf8"), "旧内容");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("★ installRelease:有一个文件哈希不符 → 整个安装放弃,目标不存在", async () => {
+  const root = await tmpDir();
+  const target = path.join(root, "app");
+  const blobs = { "chrome.exe": Buffer.from("EXE"), "b.dll": Buffer.from("GOOD") };
+  const pkg = await signedPackage(blobs);
+
+  await assert.rejects(
+    installRelease({
+      dir: target,
+      ...pkg,
+      publicKeyPem: pubPem,
+      // 第二个文件给错内容
+      fetchBlob: async (f) => (f.path === "b.dll" ? Buffer.from("EVIL") : blobs[f.path]),
+    }),
+    (err) => err.error_code === RELEASE_ERRORS.HASH_MISMATCH,
+  );
+  assert.deepEqual(await readdir(root), []);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("★ installRelease:清单里带 .. 的路径 → 拒绝(签名只证明是我们发的,不证明路径安全)", async () => {
+  const root = await tmpDir();
+  const target = path.join(root, "app");
+  const blobs = { "../evil.txt": Buffer.from("PWN") };
+  const pkg = await signedPackage(blobs); // 签名是**真的**
+
+  await assert.rejects(
+    installRelease({ dir: target, ...pkg, publicKeyPem: pubPem, fetchBlob: async (f) => blobs[f.path] }),
+    (err) => err.error_code === RELEASE_ERRORS.UNSAFE_PATH,
+  );
+  assert.deepEqual(await readdir(root), []);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("installRelease:绝对路径与盘符同样拒绝", async () => {
+  const root = await tmpDir();
+  for (const bad of ["C:/Windows/evil.dll", "/etc/passwd"]) {
+    const blobs = { [bad]: Buffer.from("X") };
+    const pkg = await signedPackage(blobs);
+    await assert.rejects(
+      installRelease({
+        dir: path.join(root, "app"),
+        ...pkg,
+        publicKeyPem: pubPem,
+        fetchBlob: async (f) => blobs[f.path],
+      }),
+      (err) => err.error_code === RELEASE_ERRORS.UNSAFE_PATH,
+      bad,
+    );
+  }
+  await rm(root, { recursive: true, force: true });
+});
+
+test("installRelease:空清单 → 拒绝(不许装一个空目录上去)", async () => {
+  const root = await tmpDir();
+  const manifest = buildManifest({ version: "1.0.0", files: [] });
+  const sig = signManifest(manifest, privPem);
+  await assert.rejects(
+    installRelease({
+      dir: path.join(root, "app"),
+      manifest,
+      signatureBase64: sig,
+      publicKeyPem: pubPem,
+      fetchBlob: async () => Buffer.from(""),
+    }),
+    (err) => err.error_code === RELEASE_ERRORS.MANIFEST_TAMPERED,
+  );
+  await rm(root, { recursive: true, force: true });
 });
