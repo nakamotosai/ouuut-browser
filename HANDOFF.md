@@ -179,7 +179,7 @@ ssh vps-jp 'tar -xzf /tmp/ouuut-harness.tgz -C /tmp/ouuut-p3/harness/package/ego
 | HEAD `69ceffb` | 现为 **`3dec593`** |
 | `e4534f4`「303→312 用例」 | 该提交全量 306 条,2 条红 |
 | `release.test.mjs` 19 条 | **26 条** |
-| 材料 13 + 2 + 1 = 15 | 实际 **12 个 `re/ego-lite/` + 3 个 `docs/`** |
+| 材料 13 + 2 + 1 = 15 | 实际 **12 个 REA 任务文件 + 3 个 `docs/` 记录**(均已移出仓库,见 ADR-010) |
 | 索引标题「十真相源」 | 表里 **12 行** |
 
 另核:`dist/ouuut-0.1.3-win-x64/payload` 恰 493 文件;五份收口文档 grep 私钥/token 模式 **0 命中**。

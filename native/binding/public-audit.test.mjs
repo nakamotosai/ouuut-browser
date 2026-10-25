@@ -9,6 +9,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  auditDanglingRefs,
   ADR010_ITEMS,
   auditPaths,
   auditContent,
@@ -149,4 +150,32 @@ test("skipContent 里的前缀整棵跳过", async () => {
     skipContent: ["vendor"],
   });
   assert.equal(r.ok, true);
+});
+
+test("★ 指向已移出材料的死链 ⇒ 拦下(公开读者点不动)", () => {
+  const r = auditDanglingRefs({ path: "docs/x.md", content: "见 `docs/附录B-REA逆向结论.md` 第 B2 节" });
+  assert.equal(r.ok, false);
+  assert.equal(r.violations[0].kind, "dangling");
+  assert.match(r.violations[0].path, /^docs\/x\.md:1$/);
+});
+
+test("说清楚了就放行(已移出 / 未公开 / 提到 ADR-010)", () => {
+  for (const line of [
+    "`docs/附录B-REA逆向结论.md`(**已移出仓库**,见 ADR-010)",
+    "REA 结论(未公开)",
+    "过一道 ADR-010 的材料审查",
+  ]) {
+    assert.equal(auditDanglingRefs({ path: "docs/x.md", content: line }).ok, true, line);
+  }
+});
+
+test("ADR-010 的记录与闸自己的实现/用例豁免(否则是自指假阳性)", () => {
+  for (const f of ["docs/决策记录.md", "native/binding/public-audit.mjs", "native/binding/public-audit.test.mjs"]) {
+    assert.equal(auditDanglingRefs({ path: f, content: "`docs/附录B-REA逆向结论.md`" }).ok, true, f);
+  }
+});
+
+test("`re/ego-lite2` 不许误伤(前缀相同但不是它)", () => {
+  assert.equal(auditDanglingRefs({ path: "docs/x.md", content: "re/ego-lite2 是另一回事" }).ok, true);
+  assert.equal(auditDanglingRefs({ path: "docs/x.md", content: "re/ego-lite/ 下的日志" }).ok, false);
 });

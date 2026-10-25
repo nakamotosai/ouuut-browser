@@ -123,7 +123,7 @@ Page.enable            Network.enable      Browser.getVersion
 **上游 harness 的真实产物**,不是我们的假设。也就是说:**这一条不需要我们额外做工作,
 只要我们的层别画蛇添足去发它。**
 
-(对照:`docs/附录B-REA逆向结论.md` 里对 ego 闭源二进制的静态分析也只找到
+(对照:对 ego 闭源二进制的静态分析结论(已移出仓库,见 ADR-010)也只找到
 「`chrome.dll` 6 处 `Runtime.enable`,其中 5 处在 DevTools frontend/Node inspector 内部,
 1 处是错误示例字符串」。两者互相印证。)
 

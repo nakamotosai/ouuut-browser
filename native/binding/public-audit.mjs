@@ -43,6 +43,54 @@ export const SECRET_PATTERNS = Object.freeze([
   { re: /\bsk-[A-Za-z0-9]{32,}\b/, why: "OpenAI 风格 API key" },
 ]);
 
+/**
+ * ADR-010 移出之后,文档里**不该再指向**那些不存在的文件 —— 对公开读者来说那是死链(P12 的判据之一)。
+ * 允许的唯一形式:**同一行里说明了**「已移出」或引用了 ADR-010(真相源索引里那种删除线条目就该这么写)。
+ */
+export const MOVED_OUT_REFS = Object.freeze([
+  /附录B-REA逆向结论-原文\.md/,
+  /附录B-REA逆向结论\.md/,
+  /方案-v1-竞品拆解\.md/,
+  /re\/ego-lite(?:\/|\b)/,
+]);
+
+/** 只看**这一行**有没有把话说清楚,不做跨行推断(免得"闸"变成猜谜)。 */
+const EXPLAINED = /已移出|未公开|ADR-010/;
+
+/**
+ * 豁免清单 —— 只有三类,每类都有理由:
+ *   1. `docs/决策记录.md`:ADR-010 自己的记录,它就是"什么移出去了"的权威,必须点名这些路径;
+ *   2. 本文件与它的用例:**必须**把路径写下来才谈得上检查它们(不豁免就成了自指假阳性)。
+ */
+export const DANGLING_EXEMPT = Object.freeze([
+  "docs/决策记录.md",
+  "native/binding/public-audit.mjs",
+  "native/binding/public-audit.test.mjs",
+]);
+
+/**
+ * 查内容里指向**已移出材料**的死链。
+ *
+ * @param {{path: string, content: string}} o
+ */
+export function auditDanglingRefs({ path: p, content } = {}) {
+  const file = norm(p);
+  if (DANGLING_EXEMPT.includes(file)) return { ok: true, violations: [] };
+  const violations = [];
+  const lines = String(content ?? "").split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!MOVED_OUT_REFS.some((re) => re.test(line))) continue;
+    if (EXPLAINED.test(line)) continue;
+    violations.push({
+      path: `${file}:${i + 1}`,
+      kind: "dangling",
+      why: "指向 ADR-010 已移出的材料 —— 公开仓库里是死链;要留就把这一行改成「已移出仓库,见 ADR-010」",
+    });
+  }
+  return { ok: violations.length === 0, violations };
+}
+
 /** 路径归一:`\` → `/`,去掉开头的 `./`。 */
 const norm = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\.\//, "");
 
@@ -103,6 +151,7 @@ export async function auditPublicMaterial({ files = [], readFile = null, skipCon
         continue; // 读不到就跳过(比如软链),不因此判失败
       }
       violations.push(...auditContent({ path: f, content }).violations);
+      violations.push(...auditDanglingRefs({ path: f, content }).violations);
     }
   }
 
