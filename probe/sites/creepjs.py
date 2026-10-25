@@ -116,6 +116,18 @@ _EXTRACT_JS = r"""
 def _classify(detail: dict) -> str:
     tells = detail.get("tells") or {}
     grade = detail.get("headlessGrade")
+    head = detail.get("headSection") or ""
+
+    # **fail-closed**:页面上明明列着 Headless 的 tell,我们却一个名字都没匹配上
+    # ⇒ 该站措辞变了(或解析退化了)。这时**不许给 passed** —— 那是把"没看懂"读成"很干净"。
+    #
+    # 为什么专门加这一条(2026-10-25 的取证):`probe/out/20261024-033825` 那轮用的是**旧的**
+    # 通用正则解析,`× Like HeadlessnoChrome: truehasPermissionsBug: true...` 一路粘连,
+    # 解出 7 个错键(`truenodownlinkmax` / `truehasheadlessworkerua` …),一个都不在
+    # `HEADLESS_TELLS` 里 —— 于是被判 `passed`,而同一份页面读数是 `88%`。
+    # 对同一张页面,`034257`(逐个名字查子串的新解析)解出 13 个正确键、判 `detected`。
+    if not tells and "Like Headless" in head:
+        return VERDICT_ERROR
 
     if grade is None and not tells:
         return VERDICT_ERROR  # 什么都没抓到 → 探针无效(不等于通过)
