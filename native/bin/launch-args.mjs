@@ -241,7 +241,7 @@ export function parseArgs(argv = []) {
  * 组装浏览器命令行。
  *
  * @param {object} opts `parseArgs()` 的结果
- * @param {object} env  环境变量(取 `OUUUUT_BROWSER`)
+ * @param {object} env  环境变量(取 `OUUUT_BROWSER` / `OUUUT_WINDOW_POSITION` / `OUUUT_WINDOW_SIZE`)
  */
 export function buildBrowserArgs(opts = {}, env = {}) {
   const exe =

@@ -99,6 +99,11 @@ test("★ 有头**不许**带 --screen-info/--window-size(否则几何这一维�
   }
   assert.ok(plan([]).args.includes("--start-maximized"), "默认那条走最大化");
   assert.ok(plan(["--window-position", "1920,0"]).args.includes("--window-position=1920,0"), "给了位置就钉住");
+  // 给尺寸那条分支:核验者指出原先**没有任何**关于 `--window-size` 条数的断言,
+  // 于是"在调用方给的尺寸之外**多加**一条 window-size"仍能全绿(M4 突变,提交前后一样)。
+  // 这里断**条数恰好为 1** 且等于调用方给的那个。
+  const withSize = plan(["--window-size", "1380,960"]).args.filter((a) => a.startsWith("--window-size"));
+  assert.deepEqual(withSize, ["--window-size=1380,960"], "有头给尺寸:就一条,且是调用方给的那条");
 });
 
 test("★ 畸形的 --window-size 不许造出畸形 --screen-info(会静默退回 800×600)", () => {
