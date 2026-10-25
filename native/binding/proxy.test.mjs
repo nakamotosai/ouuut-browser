@@ -226,3 +226,29 @@ test("proxyRawValues:只认 `--proxy-server=<值>`,空值不收", () => {
   assert.deepEqual(proxyRawValues(["--proxy-server=", "--proxy-server"]), []);
   assert.deepEqual(proxyRawValues([]), []);
 });
+
+test("★ redactProxyValue:`@` 出现在第一个 `://` **之前**时也必须抹干净(2026-10-25 核验抓到的漏抹)", () => {
+  // 曾经的输出是 `user:pw@https://***@https://proxy:8080` —— 口令 `pw` 留着,还带着 `***@` 的假象,
+  // 比"看得出没抹"更坏:你以为它抹过了。根因:`scheme://` 前缀是"第一个 `://` 之前"那段,
+  // 而它自己可能含 `@`。现在只有"前缀不含 `@` 且在最后一个 `@` 之前"才保留前缀。
+  for (const [input, want] of [
+    ["user:pw@https://proxy:8080", "***@https://proxy:8080"],
+    ["u:p@h:1://x", "***@h:1://x"],
+    ["a@b://c@d:1", "***@d:1"],
+  ]) {
+    assert.equal(redactProxyValue(input), want, `没抹干净:${input}`);
+    const line = describeArgs([`--proxy-server=${input}`]);
+    assert.ok(!line.includes("pw@") && !line.includes(":p@h"), `诊断行里漏了:${line}`);
+  }
+});
+
+test("★ describeArgs:解析成功时 query/fragment 会被丢掉(那里可能藏口令)—— 别把这条路删成 forceRedact", () => {
+  // 核验(mut-e)发现:`redactProxyValue` 里"结构化优先"那条分支没有用例守着,删掉它档案全绿。
+  // 但它**不是**死代码:parseProxy 成功时按 WHATWG 归一化并丢掉 query/fragment,
+  // 而 forceRedact 在串里没有 `@` 时**原样返回** ⇒ 秘密会直接漏进诊断。
+  assert.equal(
+    describeArgs(["--proxy-server=socks5://h:1080?password=SENTINEL"]),
+    "--proxy-server=socks5://h:1080",
+  );
+  assert.equal(describeArgs(["--proxy-server=socks5://h:1080#token=SENTINEL"]), "--proxy-server=socks5://h:1080");
+});

@@ -299,7 +299,7 @@ test("★ stderr 回显我们自己的参数时,凭据也要抹(含空格的口�
   // 2026-10-25 fuzz 核验:`redactProxy()` 是**自由文本**启发式,对"口令含空格 / 含 `/` / 用户名含 `@`"
   // 这类形状**整条不抹**——它没法知道那个空格是口令的一部分还是参数分隔。
   // 但 diagnoseExit 手里**有**代理原文(spawnArgs),所以先做**字面替换**:形状再怪也认得出来。
-  // 对端把 argv 打进 stderr 是真实发生的(坑-40 里那条泄漏就是),这里就让假对端真的这么干。
+  // 对端把 argv 打进 stderr 是真实发生的(坑-41 第三段里那两条回显出口之一),这里就让假对端真的这么干。
   const SENTINEL = "QzSpacePw";
   const cdp = spawnCdpPipe({
     exe: process.execPath,

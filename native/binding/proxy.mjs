@@ -109,6 +109,10 @@ export function redactProxy(text) {
 /**
  * **强制**脱敏一条**已知是代理串**的值:把**最后一个 `@`** 之前的整段前缀换成 `***`。
  *
+ *
+ * ⚠️ **它是"整段糊掉",不是"保留可读性"**:值里带路径时 `host:port` 会一起没
+ *    (`socks5://u:p@h:1080/a@b` 报错文本会变成 `socks5://***@b`)。这是**故意**的:
+ *    它只用于"已知是代理串"的值与代理串的报错文本,那里要的是"绝不漏",不是"好看"。
  * 与 `redactProxy` 的分工:那个面对的是**任意自由文本**(stderr、错误消息),只能靠正则猜,
  * 因此对"口令含空格 / 口令含 `/` / 用户名含 `@`"这类形状**猜不动**(见其注释里的已知边界);
  * 这里输入**已知就是一条代理串**,前缀只可能是 scheme 或凭据,不存在需要保护的路径语义,于是可以整段抹。
@@ -116,8 +120,13 @@ export function redactProxy(text) {
 function forceRedactProxyValue(value) {
   const at = value.lastIndexOf("@");
   if (at === -1) return value; // 没有凭据段,没什么可抹
+  // `scheme://` 前缀只在**它自己不含 `@` 且确实在最后一个 `@` 之前**时才保留 ——
+  // 否则会出现"看着像抹了、其实前段原样留着"的输出:`user:pw@https://proxy:8080` 曾经被抹成
+  // `user:pw@https://***@https://proxy:8080`(口令留着,还带着 `***@` 的假象)。
+  // 2026-10-25 核验抓到这一条。
   const sep = value.indexOf("://");
-  const head = sep === -1 ? "" : value.slice(0, sep + 3);
+  const head =
+    sep !== -1 && sep + 3 <= at && !value.slice(0, sep + 3).includes("@") ? value.slice(0, sep + 3) : "";
   return `${head}***${value.slice(at)}`;
 }
 
@@ -135,9 +144,13 @@ export function redactProxyValue(value) {
   if (typeof value !== "string" || value === "") return value;
   try {
     const parsed = parseProxy(value);
+    // 这条分支承重:`parseProxy().redacted` 会**丢掉 query/fragment**(那里可能藏着口令),
+    // 并按 WHATWG 归一化;只用 forceRedact 的话 `--proxy-server=socks5://h:1080?password=X` 会原样漏出。
     if (parsed) return parsed.redacted;
   } catch {
-    /* 解析不动 —— 落到强制脱敏 */
+    // ⚠️ 这里是**故意**宽catch:本函数只用于"打印给别人看",一条格式化错误不该让诊断路径本身炸掉。
+    // 代价:将来 parseProxy 里出真 bug(不只是 ProxyError)会被静默降级成强制脱敏 —— 界面上看不出。
+    // 所以改动 parseProxy 时,别指望这条分支会提醒你。
   }
   return forceRedactProxyValue(value);
 }
