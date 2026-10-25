@@ -169,9 +169,18 @@ class OuUutFacade:
                 )
             else:
                 os.killpg(os.getpgid(pid), signal.SIGKILL)
-        # CLI 用的是"每会话一个临时档案目录"(`<tmp>/ouuut-session-<cli pid>`):
-        # 既然是我们杀掉了它,顺手清掉 —— 别把垃圾留给下一个人。
-        # **要重试**:刚 kill 完那一瞬,文件可能还被握着(实测第一次 rmtree 会 EBUSY 掉)。
+        self._cleanup_session_dir()
+
+    def _cleanup_session_dir(self) -> None:
+        """清掉这次会话的临时档案目录(`<tmp>/ouuut-session-<cli pid>`)。
+
+        **要重试**:刚 kill 完那一瞬,文件可能还被握着(核验实测:不重试会留下目录)。
+        ⚠️ 核验也确认过:**裸 kill CLI 之后,浏览器通常 0.3 秒内自行退出**(CDP 管道断了),
+        但 CLI 的收尾路径不会执行 ⇒ **目录一定留下** —— 所以真正稳定需要这一手的是目录。
+        """
+        pid = getattr(self.proc, "pid", None)
+        if pid is None:
+            return
         target = Path(tempfile.gettempdir()) / f"ouuut-session-{pid}"
         for _ in range(6):
             if not target.exists():
@@ -197,6 +206,8 @@ class OuUutFacade:
                     raise ProbeError(f"{self.name}:{msg.get('error')}")
                 return msg.get("value")
             if self.proc.poll() is not None:
+                # CLI 自己死了:进程树随它走,但**会话目录会留下**(收尾路径没跑)—— 清掉它。
+                self._cleanup_session_dir()
                 raise ProbeError(
                     f"{self.name} 的 CLI 中途退出(rc={self.proc.returncode});尾部:{self._tail()}"
                 )
@@ -268,8 +279,9 @@ def launch(spec: LaunchSpec) -> Iterator[OuUutFacade]:
         argv += ["--proxy", spec.egress.proxy]
     argv += ["--timeout", str(max(30, spec.timeout_ms // 1000))]
 
-    # ⚠️ 三条都是踩出来的(见文件头):stdin 要立刻 EOF;stdout/stderr 都**不要用管道**,
-    # 直接落文件 —— 结果也走文件,一行一条。
+    # ⚠️ 两条都是踩出来的(见文件头):脚本走 stdin 时要立刻 EOF(`--script` 不碰 stdin,
+    # 也就不等它);stdout/stderr 落文件只为留现场 —— **不是**因为"管道收不到输出"
+    # (长驻脚本的 console.* 本来就被 harness 的 sink 缓冲到脚本结束,与去向无关,见坑-38)。
     with logfile.open("wb") as logfh:
         proc = subprocess.Popen(
             argv,
@@ -277,16 +289,24 @@ def launch(spec: LaunchSpec) -> Iterator[OuUutFacade]:
             stdin=subprocess.DEVNULL,
             stdout=logfh,
             stderr=subprocess.STDOUT,
+            # ⚠️ **POSIX 上必须新开一个会话**:否则子进程继承我们的进程组,
+            # `_kill_tree()` 里那句 `killpg(getpgid(pid))` 会把**探针自己**一起 SIGKILL
+            # (核验指出,P1;`contextlib.suppress` 拦不住 SIGKILL)。Windows 不支持这个参数,故条件传。
+            **({"start_new_session": True} if os.name != "nt" else {}),
         )
     facade = OuUutFacade(proc, cmdlog, reslog, logfile, Path(spec.out_dir), "ouuut", max(30, spec.timeout_ms // 1000))
     try:
         yield facade
     finally:
         facade.close()
-        # ⚠️ **日志不删** —— 出问题时那份 log 是唯一的现场(它是 gitignore 的目录,很小)。
-        # 命令/结果/驱动脚本才是每次一份、没有留存价值的,删掉。
+        # 命令/结果/驱动脚本每次一份、没有留存价值 —— 删掉。
+        # 日志:出问题时它是唯一的现场,所以**非空才留**;空日志(绝大多数情况)不留,
+        # 免得每次 launch 攒一个 0 字节文件(核验指出:P3,无上限)。
         for f in (cmdlog, reslog, driver):
             f.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            if logfile.exists() and logfile.stat().st_size == 0:
+                logfile.unlink()
 
 
 register_target("ouuut")(launch)

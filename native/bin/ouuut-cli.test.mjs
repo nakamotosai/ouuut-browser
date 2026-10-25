@@ -41,6 +41,16 @@ test("parseArgs:缺值的选项给友好错误,不是堆栈", () => {
 
 // ---- 启动参数:那六项"不要"的守护 ------------------------------------------
 
+test("★ cli() 要把 harness 的退出码传出去(此前写死 0,空脚本曾 rc=0)", async () => {
+  const sink = { out: "", write(s) { this.out += s; } };
+  // 数字 —— 原样传出
+  const rc = await cli({ argv: [], runScript: async () => 2, spawn: fakeSpawn, stdout: sink });
+  assert.equal(rc, 2, "数字返回码必须原样传出去");
+  // 非数字(测试里 runScript 可能返回任意值)—— 不许被当成退出码
+  const rc2 = await cli({ argv: [], runScript: async () => "ok", spawn: fakeSpawn, stdout: sink });
+  assert.equal(rc2, 0, "非数字一律当 0");
+});
+
 test("★ --script 的关键行为:不碰 stdin、坏脚本不许起浏览器", async () => {
   const { writeFileSync, mkdtempSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");

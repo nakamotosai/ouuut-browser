@@ -215,7 +215,7 @@ export async function cli({
     );
     return 2;
   }
-  await withRuntime({
+  const code = await withRuntime({
     argv,
     spawn,
     env,
@@ -231,7 +231,12 @@ export async function cli({
       return mod.runMain({ argv: [], stdinText });
     },
   });
-  return 0;
+  // **把退出码传出去**。此前这里写死 `return 0`,于是 harness 那条 `runMain` 的返回码(它对空脚本
+  // 与非法 argv 都会 `return 2`)被丢掉 —— 核验实测过一次:空脚本会 rc=0、只留一句 harness 的 USAGE。
+  // 现在那两条路已被上面的前置守卫挡住(不可达),但这个洞没必要留着:
+  // 将来一旦把 `argv` 透传下去,它就会复发。
+  // 只透传**数字**(测试里 `runScript` 可以返回任意值,不该被当成退出码)。
+  return typeof code === "number" ? code : 0;
 }
 
 // 直接执行时跑 CLI
