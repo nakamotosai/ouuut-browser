@@ -97,9 +97,11 @@ const handlers = {
   "Target.attachToTarget": (id, params) => reply(id, { sessionId: "S-fake-" + (params?.targetId ?? "?") }),
   // 供 snapshot 走通的最小 AX 树(角色名与结构对齐 example.com 的实测输出)
   "Accessibility.getFullAXTree": (id, _params, msg) => {
-    // 带 sessionId = 那个 OOPIF 自己的树。**主 frame 的树里看不到它** —— 这正是
-    // 为什么要单独 attach 再取。
-    if (msg?.sessionId) {
+    // 带 sessionId 时要按**那个 target 的类型**给树:
+    //   page   → 主 frame 的树(现在主 frame 也走 session 了,见 oopif.mjs)
+    //   iframe → 它自己的树(主 frame 里看不到 —— 这正是要单独 attach 的原因)
+    const sid = String(msg?.sessionId ?? "");
+    if (sid.includes("T-oopif")) {
       reply(id, {
         nodes: [
           { nodeId: "o1", role: { value: "RootWebArea" }, name: { value: "OOPIF" }, childIds: ["o2"] },
