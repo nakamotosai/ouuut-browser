@@ -148,6 +148,11 @@ python - "$RECORD" "$OUT_DIR" <<'PY'
 import json, sys, hashlib, os
 rec = json.load(open(sys.argv[1], encoding="utf-8"))
 out = sys.argv[2]
+# Windows 控制台默认 GBK,打印 ✅/❌ 会 UnicodeEncodeError ⇒ 强制 UTF-8(坑-55)
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 def sha(p):
     h = hashlib.sha256()
