@@ -26,6 +26,7 @@
 // 每一步都能验**。真浏览器那一步是 Chrome 的公开机制本身,不是我们的逻辑。
 
 import { spawnCdpPipe } from "../binding/cdp-pipe.mjs";
+import { readFile } from "node:fs/promises";
 import { createOuUutRuntime } from "../binding/ouuut-runtime.mjs";
 import { createTaskSpaceRegistry } from "../binding/task-spaces.mjs";
 import { openSessionProfiles } from "../binding/session-profiles.mjs";
@@ -183,7 +184,15 @@ export async function cli({
   }
   // 脚本从 stdin 读(`ouuut nodejs < script`)。**在读之前不要起浏览器** ——
   // 免得因为脚本为空白起一次浏览器(而硬杀的浏览器会锁住 chrome.dll,见坑-23)。
-  const stdinText = typeof runScript === "function" ? null : await readStdin(stdin);
+  //
+  // `--script <path>` 时改从**文件**读,并且**完全不碰 stdin** ——
+  // 程序化调用方(如 `probe/targets/ouuut.py`)要拿 stdin 跑自己的行协议。
+  const stdinText =
+    typeof runScript === "function"
+      ? null
+      : opts.script
+        ? await readFile(opts.script, "utf8")
+        : await readStdin(stdin);
   await withRuntime({
     argv,
     spawn,

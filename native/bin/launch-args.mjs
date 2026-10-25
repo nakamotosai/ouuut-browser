@@ -35,6 +35,8 @@ export const USAGE = `ouuut —— 自带 Chromium 的 agent 浏览器
 
 选项:
   --browser <path>        自有 Chromium 的 chrome.exe 路径(默认取 OUUUT_BROWSER / 本项目 out/Release)
+  --script <path>         从**文件**读脚本(替代 stdin)。给程序化调用方用:
+                          「--script」时我们**完全不碰 stdin**,调用方可以拿它做自己的协议
   --timeout <seconds>     单条 CDP 消息的超时(默认 30)
   --namespace <name>      注入的全局名(默认 ouuut)
   --headless              无头(默认有头 —— 与上游一致)
@@ -166,6 +168,11 @@ export function parseArgs(argv = []) {
       case "--browser": {
         const v = next(); if (v === null) return out;
         out.browser = v;
+        break;
+      }
+      case "--script": {
+        const v = next(); if (v === null) return out;
+        out.script = v;
         break;
       }
       case "--timeout": {

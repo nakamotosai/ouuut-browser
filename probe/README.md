@@ -53,7 +53,7 @@ def launch(spec: LaunchSpec) -> Iterator[BrowserFacade]   # 上下文管理器
 | `patchright-hardened` | 上面两者叠加 | **决定性格**:不写内核代码能走多远 | ✅ |
 | `cloak` | CloakBrowser | 商业反检测对照(含内核补丁) | ✅ |
 | `ego` | ego lite | 「进程内通道 + 不发 `Runtime.enable`」的实证(REA B1/B2) | ✅ |
-| `ouuut` | 我方 | 自有 Chromium + 自有原生层(**M1 已建成**;驱动入口 `native/bin/ouuut.mjs`) | ⚠️ **适配器未写** —— P8 要做的事:加一个走本 CLI 的 target,才能取"干净读数" |
+| `ouuut` | 我方 | 自有 Chromium + 自有原生层(**M1 已建成**;驱动入口 `native/bin/ouuut.mjs`) | ✅ **适配器已写**(2026-10-25,`probe/targets/ouuut.py`):长驻 CLI + 文件型行协议;**可走代理**(不像 ego);不用 `spec.profile_dir`(用 CLI 自带的每会话临时档案目录,跑完自动删)—— 详见该文件抬头 |
 
 ### 3.2 检测站(site)
 
@@ -91,9 +91,15 @@ probe/out/<run-id>/
 ### 3.4 直接可跑的工具(不起探针框架)
 
 ```bash
+# 跑**我们自己的** target(自有内核 + 自有驱动):
+PY="F:/projects/ouuut-browser/probe/.venv/Scripts/python.exe"      # ⚠️ 用绝对路径:msys 下相对路径会 command not found
+$PY -u probe/run.py --targets ouuut --sites bot-detector --egress direct
+# 同机同出口的多 target 对照(矩阵的原始产物):
+$PY -u probe/run.py --targets ouuut,pw-naive,patchright-hardened,cloak --sites bot-detector --egress direct
+
 python probe/tools/check_creepjs_classify.py                     # 判据自查:13 条,13/13 通过
 node  native/bin/ouuut.mjs nodejs --headless --timeout 60 \
-      < probe/tools/clean_reading_via_ouuut.mjs                  # 用自己的驱动取 bot-detector 干净读数
+      < probe/tools/clean_reading_via_ouuut.mjs                  # 不走探针框架的"快读"版本(同一批数据)
 node  native/bin/ouuut.mjs nodejs --headless --timeout 60 \
       < probe/tools/webrtc_audit_via_ouuut.mjs                   # auditWebrtc 真跑(判据见下)
 ```
