@@ -11,10 +11,29 @@
 // 这些都是真实流量里会发生的。
 
 import fs from "node:fs";
+import net from "node:net";
 
 const NUL = 0x00;
 const OUT = 4; // 子进程往 fd 4 写 = 父进程读
 const IN = 3; // 父进程往 fd 3 写 = 子进程读
+
+// ---- 两种传输都要支持 ------------------------------------------------------
+//
+// POSIX:`--remote-debugging-pipe`,fd 3 读 / fd 4 写。
+// Windows:**CRT fd 是每个进程自己的表**,父进程装不出 fd 3/4,所以真 Chrome 走的是
+//         `--remote-debugging-io-pipes=<in>,<out>`。打了 0004 补丁后它接受**命名管道路径**,
+//         于是本替身也能连 —— 这样 Windows 那条路不用起真浏览器就能验。
+const ioPipesArg = process.argv.find((a) => a.startsWith("--remote-debugging-io-pipes="));
+let writeSocket = null;
+let readStream = null;
+if (ioPipesArg) {
+  const [inPath, outPath] = ioPipesArg.slice("--remote-debugging-io-pipes=".length).split(",");
+  // 对端扮演的是**浏览器**:in 是它读的(父进程写命令),out 是它写的(父进程读响应)。
+  readStream = net.connect(inPath);
+  writeSocket = net.connect(outPath);
+} else {
+  readStream = fs.createReadStream(null, { fd: IN });
+}
 
 // ⚠️ 本对端**不能用 `process.exit()` 结束自己**(2026-10-24 实测,Node 22 / Windows):
 //   只要 fd 3 上挂着一个待决的读(`createReadStream(...).on("data")` 或 `fs.read` 回调递归),
@@ -32,7 +51,17 @@ function hardExit(code) {
 }
 
 function writeRaw(text) {
-  fs.writeSync(OUT, Buffer.from(text + "\0", "utf8"));
+  writePartial(text + "\0");
+}
+
+/** 不带分帧分隔符的裸写 —— 只给"故意写一半"那条用例用。 */
+function writePartial(text) {
+  const buf = Buffer.from(text, "utf8");
+  if (writeSocket) {
+    writeSocket.write(buf);
+    return;
+  }
+  fs.writeSync(OUT, buf);
 }
 
 function reply(id, result) {
@@ -85,10 +114,10 @@ const handlers = {
   "Fake.split": (id) => {
     const text = JSON.stringify({ id, result: { split: true, whole: "a".repeat(300) } }) + "\0";
     const third = Math.ceil(text.length / 3);
-    fs.writeSync(OUT, Buffer.from(text.slice(0, third), "utf8"));
+    writePartial(text.slice(0, third));
     setTimeout(() => {
-      fs.writeSync(OUT, Buffer.from(text.slice(third, third * 2), "utf8"));
-      setTimeout(() => fs.writeSync(OUT, Buffer.from(text.slice(third * 2), "utf8")), 10);
+      writePartial(text.slice(third, third * 2));
+      setTimeout(() => writePartial(text.slice(third * 2)), 10);
     }, 10);
   },
 
@@ -97,7 +126,7 @@ const handlers = {
   "Fake.glued": (id) => {
     const a = JSON.stringify({ id, result: { first: true } });
     const b = JSON.stringify({ method: "Fake.anEvent", params: { glued: 1 } });
-    fs.writeSync(OUT, Buffer.from(a + "\0" + b + "\0", "utf8"));
+    writePartial(a + "\0" + b + "\0");
   },
 
   // 先发一个事件,再回响应 —— 验证事件与响应能正确分流
@@ -120,7 +149,7 @@ const handlers = {
 
   // 写一半就退出 —— 验证"残留缓冲要报出来"
   "Fake.halfThenExit": (id) => {
-    fs.writeSync(OUT, Buffer.from(`{"id":${id},"result":{"trunca`, "utf8"));
+    writePartial(`{"id":${id},"result":{"trunca`);
     setTimeout(() => hardExit(3), 20);
   },
 
@@ -131,7 +160,7 @@ const handlers = {
 };
 
 let buffer = Buffer.alloc(0);
-fs.createReadStream(null, { fd: IN }).on("data", (chunk) => {
+readStream.on("data", (chunk) => {
   buffer = Buffer.concat([buffer, chunk]);
   let start = 0;
   for (;;) {

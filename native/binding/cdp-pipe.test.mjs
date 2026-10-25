@@ -148,6 +148,8 @@ test("★ 诊断:对端**启动阶段**退 0 且零输出 → 报错要明说这
     exe: process.execPath,
     args: ["-e", "process.exit(0)"],
     name: "佯死对端",
+    // node 不认 --remote-debugging-io-pipes(exit 9 "bad option"),这里只验诊断 → 走 fd3/4
+    useNamedPipes: false,
     timeoutMs: 2_000,
   });
   t.after(() => cdp.close().catch(() => {}));
@@ -168,6 +170,8 @@ test("★ 诊断:对端有 stderr → 把 stderr 带上(那通常就是原因)",
     exe: process.execPath,
     args: ["-e", "process.stderr.write('BOOM-原因在此\\n'); process.exit(3)"],
     name: "带输出的对端",
+    // node 不认 --remote-debugging-io-pipes(exit 9 "bad option"),这里只验诊断 → 走 fd3/4
+    useNamedPipes: false,
     timeoutMs: 2_000,
   });
   t.after(() => cdp.close().catch(() => {}));
@@ -184,6 +188,8 @@ test("★ 诊断:对端死了之后再发命令,报错也带诊断(而不是光�
     exe: process.execPath,
     args: ["-e", "process.exit(0)"],
     name: "佯死对端",
+    // node 不认 --remote-debugging-io-pipes(exit 9 "bad option"),这里只验诊断 → 走 fd3/4
+    useNamedPipes: false,
     timeoutMs: 2_000,
   });
   t.after(() => cdp.close().catch(() => {}));
@@ -201,4 +207,37 @@ test("★ 诊断:对端死了之后再发命令,报错也带诊断(而不是光�
     () => cdp.sendRaw({ id: 1, method: "Page.enable" }),
     (e) => /启动阶段/.test(e.message),
   );
+});
+
+// ---- Windows 命名管道传输(0004 补丁的父进程侧)----------------------------
+//
+// 为什么需要这一层:CRT fd 3/4 是每个进程自己的表,父进程装不出来,所以
+// `--remote-debugging-pipe` 从 Node 出发在 Windows 上永远走不通;而开 TCP 端口
+// 被 ADR-005 明令禁止。命名管道是唯一既不违规、又纯 JS 能实现的路。
+
+test("★ Windows:命名管道往返(全程不开任何端口)", { skip: process.platform !== "win32" }, async (t) => {
+  const cdp = spawnCdpPipe({
+    exe: process.execPath,
+    args: [PEER],
+    name: "np-peer",
+    timeoutMs: 3_000,
+    useNamedPipes: true,
+  });
+  t.after(() => cdp.close().catch(() => {}));
+
+  const r = await cdp.send("Fake.echo", { via: "named-pipe" });
+  assert.deepEqual(r, { echo: { via: "named-pipe" } });
+});
+
+test("★ Windows:两个实例并发 —— 管道名必须每次随机,否则互相串台", { skip: process.platform !== "win32" }, async (t) => {
+  const mk = (nm) =>
+    spawnCdpPipe({ exe: process.execPath, args: [PEER], name: nm, timeoutMs: 5_000, useNamedPipes: true });
+  const a = mk("A");
+  const b = mk("B");
+  t.after(() => Promise.all([a.close(), b.close()]).catch(() => {}));
+
+  // 两个实例同时说各自的话:若管道名固定,连接会互相抢走,至少一个拿不到回应
+  const [ra, rb] = await Promise.all([a.send("Fake.echo", { who: "A" }), b.send("Fake.echo", { who: "B" })]);
+  assert.deepEqual(ra, { echo: { who: "A" } });
+  assert.deepEqual(rb, { echo: { who: "B" } });
 });

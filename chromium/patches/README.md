@@ -7,7 +7,22 @@
 |---|---|---|
 | `0001-ua-remove-headless-token.patch` | 去掉 `GetUserAgentInternal()` 里往 UA 插的 `Headless` | `bot-detector` 的 `headless` 项转 🟢;**同时覆盖 Web Worker** |
 | `0002-ua-force-google-chrome-brand.patch` | `navigator.userAgentData.brands` 里强制出现 `Google Chrome` | `bot-detector` 的 `useragent` 项转 🟢 |
-| `0003-vs-toolchain-sdk-version-env.patch` | **构建**补丁:让 `SDK_VERSION` 优先读 `OUUUT_WINDOWS_SDK_VERSION` 环境变量(上游在两处硬钉 `10.0.28000.0`) | `gn gen` 能过;不设该变量时行为与上游一致 |
+| `0004-cdp-named-pipe.patch` | **通道**补丁:`AdoptHandle()` 除整数值句柄外,**也接受命名管道路径** | Node 侧可用纯 JS 走 `--remote-debugging-io-pipes`,**依然不开任何端口**(ADR-005);`cdp-pipe.test.mjs` 的 16 条用例在 Windows 上真的跑在命名管道上 |
+
+### 为什么需要 `0004`
+
+上游 `--remote-debugging-pipe` 在 **POSIX** 上走 fd 3 读、fd 4 写 —— Node 的 stdio 能直接给。
+但 **CRT 文件描述符是每个进程自己的表**:父进程在 `CreateProcess` 时能继承 HANDLE,
+**却无法给子进程装出 fd 3/4**。于是任何用 Node / Python / Go 的父进程在 Windows 上都走不通
+这条路(实测:浏览器启动阶段就退 0、零输出 —— `docs/坑与解法.md` 坑-29)。
+
+Windows 专用的 `--remote-debugging-io-pipes` 本来只收**句柄的整数值**,而 JS 层拿不到 HANDLE。
+`0004` 让它在数字解析失败时把字符串当**命名管道路径**去 `CreateFileW` —— 父进程侧于是
+纯 JS 可实现,且**全程不监听任何端口**,ADR-005 完好。
+
+> ⚠️ `0003-vs-toolchain-sdk-version-env.patch` 在下面的旧表里提到过,但**文件实际不存在**
+> (构建时未落地)。编号保留不复用,避免与未来重放的补丁撞号。
+
 
 两个 UA 补丁改的是**同一个文件**(`components/embedder_support/user_agent_utils.cc`),
 但 hunk 分别在 162 行与 215 行,**相隔 53 行、互不干扰** —— 已实测按顺序 `--3way` 应用成功。

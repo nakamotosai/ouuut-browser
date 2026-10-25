@@ -1,0 +1,62 @@
+diff --git a/content/browser/devtools/devtools_agent_host_impl.cc b/content/browser/devtools/devtools_agent_host_impl.cc
+index 44ffa91fca..f58d5832dc 100644
+--- a/content/browser/devtools/devtools_agent_host_impl.cc
++++ b/content/browser/devtools/devtools_agent_host_impl.cc
+@@ -16,6 +16,7 @@
+ #include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_split.h"
+ #include "base/strings/string_view_util.h"
++#include "base/strings/utf_string_conversions.h"
+ #include "content/browser/devtools/dedicated_worker_devtools_agent_host.h"
+ #include "content/browser/devtools/devtools_http_handler.h"
+ #include "content/browser/devtools/devtools_manager.h"
+@@ -88,6 +89,19 @@ void SetDevToolsPipeHandler(std::unique_ptr<DevToolsPipeHandler> handler) {
+ 
+ #if BUILDFLAG(IS_WIN)
+ // Map handle to file descriptor
++//
++// ouuut: 除了「父进程传进来的可继承句柄(数字)」,还接受**命名管道路径**。
++//
++// 动机:上游这条路要求父进程把可继承句柄的整数值序列化过来。而 CRT 文件描述符
++// 是**每个进程自己的表** —— 父进程在 CreateProcess 时能继承 HANDLE,却无法给子
++// 进程装出 fd 3/4。于是任何用 Node / Python / Go 这类运行时的父进程都走不通
++// `--remote-debugging-pipe`(它硬编码用 fd 3 读、fd 4 写),只能退到开 TCP 端口。
++//
++// 而命名管道在父进程侧是纯用户态就能建的。这里在数字解析失败时把字符串当路径去
++// CreateFileW,子进程自己连上来 —— 于是父进程可以用任何语言实现,且**依然不开端口**。
++//
++// 方向:`flags == _O_RDONLY` 表示这个管道是给浏览器**读**的(父进程写),
++// 否则是浏览器**写**的(父进程读)。
+ int AdoptHandle(const std::string& serialized_pipe, int flags) {
+   // Deserialize the handle.
+   // We use the fact that inherited handles in the child process have the same
+@@ -95,11 +109,26 @@ int AdoptHandle(const std::string& serialized_pipe, int flags) {
+   // See:
+   // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa
+   uint32_t handle_as_uint32;
+-  if (!base::StringToUint(serialized_pipe, &handle_as_uint32)) {
+-    return -1;
++  HANDLE handle;
++  bool opened_by_us = false;
++  if (base::StringToUint(serialized_pipe, &handle_as_uint32)) {
++    handle = base::win::Uint32ToHandle(handle_as_uint32);
++  } else {
++    // ouuut: 不是数字 → 当命名管道路径处理。
++    const DWORD access = (flags == _O_RDONLY) ? GENERIC_READ : GENERIC_WRITE;
++    handle = ::CreateFileW(base::UTF8ToWide(serialized_pipe).c_str(), access,
++                           /*dwShareMode=*/0, /*lpSecurityAttributes=*/nullptr,
++                           OPEN_EXISTING, /*dwFlagsAndAttributes=*/0,
++                           /*hTemplateFile=*/nullptr);
++    if (handle == INVALID_HANDLE_VALUE) {
++      return -1;
++    }
++    opened_by_us = true;
+   }
+-  HANDLE handle = base::win::Uint32ToHandle(handle_as_uint32);
+   if (GetFileType(handle) != FILE_TYPE_PIPE) {
++    if (opened_by_us) {
++      ::CloseHandle(handle);
++    }
+     return -1;
+   }
+   // Map the handle to the file descriptor

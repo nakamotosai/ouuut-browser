@@ -18,6 +18,8 @@
 // 上的假 CDP 对端跑通全链路(因此本文件的正确性不依赖"能不能起浏览器")。
 
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import net from "node:net";
 
 const NUL = 0x00;
 
@@ -67,18 +69,67 @@ export function createMessageSplitter(onMessage) {
  *
  * `name` 只用于错误信息,不参与产品语义。
  */
-export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeoutMs = DEFAULT_TIMEOUT_MS }) {
-  const child = spawn(exe, args, {
+export function spawnCdpPipe({
+  exe,
+  args = [],
+  env,
+  cwd,
+  name = "chrome",
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  // Windows 上默认走**命名管道**。原因见下面那段注释。
+  useNamedPipes = process.platform === "win32",
+}) {
+  // ---- 传输:命名管道(Windows) 或 fd3/fd4(POSIX) -------------------------
+  //
+  // 为什么 Windows 必须换一套:
+  //   POSIX 上 `--remote-debugging-pipe` 用 **fd 3 读、fd 4 写**,Node 的 stdio
+  //   能直接给出这两个 fd,一切正常。
+  //   但 **CRT 文件描述符是每个进程自己的表** —— 父进程在 CreateProcess 时能继承
+  //   HANDLE,却**无法给子进程装出 fd 3/4**。所以这条路从 Node 出发在 Windows 上
+  //   **永远走不通**(实测:浏览器启动阶段就退 0、零输出,见 docs/坑与解法.md 坑-29)。
+  //
+  //   而 Windows 专用的 `--remote-debugging-io-pipes` 本来只收句柄的整数值;
+  //   打了 `chromium/patches/0004-cdp-named-pipe.patch` 之后它**也接受命名管道路径**,
+  //   于是父进程侧可以纯 JS 实现,**依然不开任何端口**(ADR-005 要求)。
+  //
+  // 方向:`in` 是浏览器**读**的(我们写命令),`out` 是浏览器**写**的(我们读响应)。
+  let pipePaths = null;
+  const servers = [];
+  if (useNamedPipes) {
+    const token = randomBytes(8).toString("hex");
+    pipePaths = {
+      in: `\\\\.\\pipe\\ouuut-${token}-in`,
+      out: `\\\\.\\pipe\\ouuut-${token}-out`,
+    };
+    // 必须在起进程**之前**把管道建好 —— 浏览器一起来就会去连,连不上就直接放弃
+    for (const path of [pipePaths.in, pipePaths.out]) {
+      const srv = net.createServer();
+      srv.on("error", (e) => {
+        failAll(new CdpPipeError(`命名管道 ${path} 出错:${e.message}`, { cause: e }));
+      });
+      srv.listen(path);
+      servers.push(srv);
+    }
+  }
+
+  const effectiveArgs = pipePaths
+    ? [...args, `--remote-debugging-io-pipes=${pipePaths.in},${pipePaths.out}`]
+    : args;
+
+  const child = spawn(exe, effectiveArgs, {
     cwd,
     env: env ?? process.env,
     // [0]=stdin [1]=stdout [2]=stderr [3]=**父写子读**(CDP 输入) [4]=**子写父读**(CDP 输出)
-    stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
+    // 命名管道模式下 3/4 用不上(浏览器自己连管道),就不必再分配
+    stdio: pipePaths
+      ? ["ignore", "ignore", "pipe"]
+      : ["ignore", "ignore", "pipe", "pipe", "pipe"],
     windowsHide: true,
   });
 
-  const toChild = child.stdio[3];
-  const fromChild = child.stdio[4];
-  if (!toChild || !fromChild) {
+  let toChild = pipePaths ? null : child.stdio[3];
+  let fromChild = pipePaths ? null : child.stdio[4];
+  if (!pipePaths && (!toChild || !fromChild)) {
     child.kill();
     throw new CdpPipeError(`起 ${name} 时拿不到 fd3/fd4 —— pipe 通道没接上`);
   }
@@ -91,7 +142,7 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
   let exitInfo = null;
   /** 诊断用:起至今多久、当初用的是哪串参数(报错时原样带上,省得再回去翻) */
   const startedAt = Date.now();
-  const spawnArgs = [exe, ...args];
+  const spawnArgs = [exe, ...effectiveArgs];
 
   const stderrChunks = [];
   /** 子进程 stderr 的尾部 —— 报错时带上它对定位帮助极大(实测)。 */
@@ -154,13 +205,45 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
     }
   });
 
-  fromChild.on("data", (chunk) => splitter.push(chunk));
-  fromChild.on("end", () => {
-    const rest = splitter.end();
-    if (rest) {
-      failAll(new CdpPipeError(`${name} 在写完一条消息前就关闭了输出:${rest.slice(0, 200)}`));
+  /** 把读端接上分帧器。命名管道模式下要等浏览器连上来才有流,所以抽成函数。 */
+  function attachFromChild(stream) {
+    fromChild = stream;
+    stream.on("data", (chunk) => splitter.push(chunk));
+    stream.on("end", () => {
+      const rest = splitter.end();
+      if (rest) {
+        failAll(new CdpPipeError(`${name} 在写完一条消息前就关闭了输出:${rest.slice(0, 200)}`));
+      }
+    });
+    stream.on("error", (e) => {
+      failAll(new CdpPipeError(`${name} 的读管道出错:${e.message}`, { cause: e }));
+    });
+  }
+
+  // 命名管道模式下两个连接是**异步**到达的,所以写入要先排队、连上再按序放出去。
+  // 这样 `sendRaw()` 依然可以同步调用(harness 的透传路径依赖这一点)。
+  const writeQueue = [];
+  function writeToChild(data, cb) {
+    if (toChild) {
+      toChild.write(data, cb);
+      return;
     }
-  });
+    writeQueue.push({ data, cb });
+  }
+
+  if (pipePaths) {
+    servers[0].once("connection", (sock) => {
+      toChild = sock;
+      sock.on("error", (e) => {
+        failAll(new CdpPipeError(`${name} 的写管道出错:${e.message}`, { cause: e }));
+      });
+      for (const item of writeQueue) toChild.write(item.data, item.cb);
+      writeQueue.length = 0;
+    });
+    servers[1].once("connection", (sock) => attachFromChild(sock));
+  } else {
+    attachFromChild(fromChild);
+  }
 
   /**
    * 把"对端死了"翻译成**能直接读懂的诊断**。
@@ -225,7 +308,7 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
       // timer 不该拖住进程退出
       if (typeof timer.unref === "function") timer.unref();
       pending.set(id, { resolve, reject, timer, method });
-      toChild.write(payload + "\0", (err) => {
+      writeToChild(payload + "\0", (err) => {
         if (!err) return;
         const p = pending.get(id);
         if (!p) return;
@@ -244,7 +327,7 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
         code: "OUUUT_CDP_PIPE_CLOSED",
       });
     }
-    toChild.write(JSON.stringify(obj) + "\0");
+    writeToChild(JSON.stringify(obj) + "\0");
   }
 
   return {
@@ -273,14 +356,28 @@ export function spawnCdpPipe({ exe, args = [], env, cwd, name = "chrome", timeou
     /** 干净收尾:先给一个**已 resolve 的拒绝理由**的窗口,再强杀。
      *  硬杀的进程会留下锁住的 chrome.dll —— 见 docs/坑与解法.md 坑-23。 */
     async close({ killAfterMs = 5_000 } = {}) {
+      // 命名管道是我们建的:**即使对端已经退了也必须关掉**,否则监听句柄会挂住进程
+      // (2026-10-25 实测:对端启动即退时 close() 会走到下面的 early return,漏掉这一步)
+      for (const srv of servers) {
+        try {
+          srv.close();
+        } catch {
+          /* 没在监听就算了 */
+        }
+      }
       if (closed) return;
       failAll(new CdpPipeError(`${name} 正在关闭 —— 未完成的 CDP 请求作废`, { code: "OUUUT_CDP_PIPE_CLOSED" }));
       try {
-        toChild.end();
+        toChild?.end();
       } catch {
         /* 已经关了就算了 */
       }
-      const exited = new Promise((r) => child.once("exit", r));
+      // 子进程**已经退出**时 `once("exit")` 不会再触发 —— 直接等会挂死。
+      // (2026-10-25 实测:对端启动即退的用例里 close() 会永远挂住。)
+      const exited =
+        child.exitCode !== null || child.signalCode !== null
+          ? Promise.resolve()
+          : new Promise((r) => child.once("exit", r));
       child.kill();
       const timer = setTimeout(() => {
         if (!closed) child.kill("SIGKILL");
