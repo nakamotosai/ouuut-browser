@@ -11,7 +11,7 @@ import { WAIT_LOAD_STATES, WAIT_SELECTOR_STATES } from "./core.mjs";
 import { ServeError } from "./errors.mjs";
 
 export const MCP_PROTOCOL_VERSION = "2024-11-05";
-export const SERVER_INFO = { name: "ouuut", version: "0.1.3" };
+export const SERVER_INFO = { name: "ouuut", version: "0.1.4" };
 
 /**
  * 工具表。**形状要薄**:每个工具就是 `core` 上一个操作,别在这里塞业务逻辑。
