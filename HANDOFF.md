@@ -246,3 +246,14 @@ M5 段旧的「6 条 skip 是平台门」说法未随 M0 一起清除、P8 把�
 | **隔离(真浏览器)** | persona 的 context 写入 cookie 后:persona jar = `["only_persona"]`,**real jar = `[]`** |
 | **CLI 通路** | `--profile-kind persona|disposable` → `listProfiles()` 与 kind 一致;快照 397 字符含 `hello ouuut` |
 | **残留** | CLI 通路的 `real` 未在 Linux 上跑(需档案目录参数,本机 shell 守卫拦那个字面量);`real` 的模块级运行已验 |
+
+---
+
+## MCP 会话层改造记录（2026-10-26）
+
+| 项 | 内容 |
+|---|---|
+| 改了什么 | `browser_batch` / `browser_wait` / `browser_profile` + 轨迹记录；原 4 个工具行为不变 |
+| 证据 | 全量 `440/440`；`verify-three-entries` 连续 3/3；`verify-mcp-session` 通过；提交 `34d0040`（已在 origin/gitea） |
+| 缺口 | 档案建/关未经 MCP 暴露（生命周期归 `session-profiles`）；轨迹仅 MCP stdio；`text` 等待只覆盖主 frame |
+| Next safe action | 若要 MCP 管档案生命周期，先在 ADR 里定收尾顺序，再动 `browser_profile` |
