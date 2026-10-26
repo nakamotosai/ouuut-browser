@@ -38,7 +38,8 @@ RECORD="${REPO_ROOT}/chromium/REPRODUCIBILITY.json"
 UPSTREAM="${REPO_ROOT}/chromium/UPSTREAM"
 PATCH_DIR="${REPO_ROOT}/chromium/patches"
 SRC_DIR="${REPO_ROOT}/chromium/src"
-OUT_DIR="${SRC_DIR}/out/Release"
+# 默认校验正式构建目录;R1(异路径重建)用 OUUUT_OUT_DIR 指向另一个输出目录
+OUT_DIR="${OUUUT_OUT_DIR:-${SRC_DIR}/out/Release}"
 ARGS_FILE="${OUT_DIR}/args.gn"
 
 # 被钉的产物 —— 顺序稳定,便于 diff
